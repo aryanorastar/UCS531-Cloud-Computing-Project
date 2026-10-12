@@ -6,3 +6,9 @@
 __pycache__/
 *.py[cod]
 .DS_Store
+.aws-sam/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+deployment.json

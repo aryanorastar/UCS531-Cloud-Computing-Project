@@ -5,7 +5,7 @@ Here is a list of sample questions, categorized by the research paper you've ing
 
 ### 1\. "Attention Is All You Need" (The Transformer)
 
-_(Use the document\_id you got from uploading 1706.03762.pdf)_
+_(Use the document\_id you got from uploading Attention Is All You Need.pdf)_
 
 *   "What is the main idea of this paper?"
     
@@ -24,7 +24,7 @@ _(Use the document\_id you got from uploading 1706.03762.pdf)_
 
 ### 2\. "Deep Residual Learning..." (ResNet)
 
-_(Use the document\_id you got from uploading 1512.03385.pdf)_
+_(Use the document\_id you got from uploading Deep Residual Learning for Image Recognition.pdf)_
 
 *   "What is the 'degradation' problem that this paper addresses?"
     
@@ -39,7 +39,7 @@ _(Use the document\_id you got from uploading 1512.03385.pdf)_
 
 ### 3\. "Generative Adversarial Nets" (GANs)
 
-_(Use the document\_id you got from uploading 1406.2661.pdf)_
+_(Use the document\_id you got from uploading Generative Adversarial Networks.pdf)_
 
 *   "What are the two main components of a Generative Adversarial Net?"
     
@@ -54,7 +54,7 @@ _(Use the document\_id you got from uploading 1406.2661.pdf)_
 
 ### 4\. "BERT: Pre-training..." (BERT)
 
-_(Use the document\_id you got from uploading 1810.04805.pdf)_
+_(Use the document\_id you got from uploading BERT Pre-training of Deep Bidirectional Transformers for Language Understanding.pdf)_
 
 *   "What does 'BERT' stand for?"
     
@@ -71,7 +71,7 @@ _(Use the document\_id you got from uploading 1810.04805.pdf)_
 
 ### 5\. "A Survey of Large Language Models"
 
-_(Use the document\_id you got from uploading 2303.18223.pdf)_
+_(Use the document\_id you got from uploading A Survey of Large Language Models.pdf)_
 
 *   "What are the four main pre-training objectives for LLMs mentioned in this survey?"
     

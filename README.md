@@ -1,75 +1,81 @@
-# Serverless RAG Pipeline on AWS for Document Q&A
+# Serverless PDF Q&A on AWS
 
-Private project repository: [aryanorastar/UCS531-Cloud-Computing-Project](https://github.com/aryanorastar/UCS531-Cloud-Computing-Project).
+Private repository: [aryanorastar/UCS531-Cloud-Computing-Project](https://github.com/aryanorastar/UCS531-Cloud-Computing-Project).
 
-This project describes an AWS application that accepts PDF documents, extracts their text, and answers questions using relevant passages from those documents. Retrieval-Augmented Generation (RAG) supplies retrieved text to an AI model as context for its answer.
+Upload a PDF, wait for text extraction and indexing, and ask questions answered from retrieved passages. The backend uses S3, asynchronous Textract, DynamoDB, Bedrock Titan embeddings, and Bedrock DeepSeek R1 answers.
 
-## Current implementation
+## Current status
 
-Reviewed on 12 October 2026. The repository contains a Python notebook client, manual AWS setup guides, and five sample research papers. **The backend Lambda source files referenced by the guides are absent.** There is no infrastructure template, dependency manifest, automated test suite, or web interface. A working deployment in this project's AWS account has not been verified.
+All six Lambda handlers, the shared client, an AWS SAM deployment, integration tests, and GitHub Actions workflows are implemented. Local tests simulate AWS storage and events and stub Textract/Bedrock responses; they do not validate a live model. The SAM template validates and packages for Python 3.12.
 
-| Included | Purpose |
-| --- | --- |
-| `index.ipynb` | Requests an upload URL, uploads PDFs to S3, then calls `/query` and `/answer` and prints answers with source excerpts. |
-| `docs/` | Describes the intended AWS infrastructure and includes sample questions. |
-| `pdfs/` | Five papers for ingestion and question-answering demonstrations. |
-| `ARCHITECTURE.md` | Explains the documented pipeline, current evidence, and design gaps. |
-| `ROADMAP.md` | Tracks the implementation checklist and recommended improvement order. |
+**Live AWS deployment and real-model verification are pending AWS credentials.** No account/profile or deployment role was configured in the workspace during implementation. The repository remains private. See [ARCHITECTURE.md](ARCHITECTURE.md) and [ROADMAP.md](ROADMAP.md) for current implementation scope and remaining work.
 
-The notebook uses your configured API and fresh document IDs. Saved execution outputs have been cleared. Its presence alone does not provision AWS resources or implement the backend.
+## Full flow
 
-## Documented workflow
+1. An IAM-signed request to `POST /upload-url` registers a document and returns a 15-minute presigned S3 PUT URL.
+2. The client streams the PDF into a private, versioned bucket using the returned headers.
+3. `process_document_batch` verifies the stored version's size and PDF header and starts an idempotent Textract job.
+4. `handle_textract_result` reads all result pages, creates overlapping text chunks with page references, and writes deterministic pending chunks.
+5. DynamoDB Streams invokes `generate_embeddings` immediately. Chunk completion and the document's progress counter are committed atomically. When all chunks are indexed, document status becomes `READY`.
+6. `POST /query` returns relevant passages using exact cosine similarity within the caller's document scope.
+7. `POST /answer` queues a job and returns HTTP 202. The worker retrieves trusted passages itself, invokes DeepSeek, and stores an answer with source metadata. The client polls `GET /answers/{job_id}`.
 
-1. The client calls `POST /upload-url` to receive a presigned S3 upload URL and document ID.
-2. The client uploads a PDF directly to S3.
-3. An S3 event starts an asynchronous Textract job. Textract sends completion status to SNS.
-4. A result handler retrieves the extracted text, divides it into chunks, and stores them in DynamoDB.
-5. An EventBridge schedule runs an embedding generator every five minutes. It uses Bedrock Titan to turn chunks into vectors.
-6. `POST /query` embeds the question and ranks stored vectors by cosine similarity, returning the top chunks.
-7. The client sends the question and chunks to `POST /answer`, which is intended to use a Bedrock DeepSeek model and return an answer with sources.
+## Quick start
 
-These are the intended backend behaviors described in the guides; their source code is not included. The documented DynamoDB design stores vectors and relies on application code to compare them.
+Use Python 3.12:
 
-## Repository structure
-
-```text
-.
-├── ARCHITECTURE.md
-├── ROADMAP.md
-├── README.md
-├── index.ipynb
-├── docs/
-│   ├── 1-Aws_Setup.md
-│   ├── 2-Upload_Endpoint.md
-│   ├── 3-Data_Ingestion.md
-│   ├── 4-RAG_Query_API.md
-│   ├── 5-Testing_Scripts.md
-│   └── Sample_Questions.md
-└── pdfs/
-    └── five sample research papers
+```sh
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+pytest -q
+sam validate --lint --region us-east-1
+sam build --region us-east-1
 ```
 
-## Notebook configuration
+After signing in to your default AWS profile, deploy and run a real sample PDF:
 
-The notebook needs Python, Jupyter, the `requests` package, and a compatible deployed API. Dependency versions have not yet been specified.
+```sh
+python -m scripts.deploy --smoke-test
+```
 
-Set `RAG_API_BASE_URL` to **your own API's invoke URL, including its stage**. You can set it in the notebook before running the client cells:
+This provisions billable AWS resources and performs Textract/model calls. The default is `us-east-1`, with `amazon.titan-embed-text-v2:0` and `us.deepseek.r1-v1:0`. The DeepSeek profile uses US cross-region inference. This template deliberately supports its documented US source regions rather than assuming the original Mumbai setup supports that model.
+
+The script exports stack outputs to ignored `deployment.json`. Set `RAG_API_BASE_URL` to its `ApiBaseUrl` output, including the stage, before using the notebook or client. API calls use your AWS credential chain and require `execute-api:Invoke` permission. [Deployment and GitHub OIDC setup](docs/DEPLOYMENT.md) explains account prerequisites, setup, and teardown.
+
+## Client example
 
 ```python
-import os
+from client import RagClient
 
-os.environ["RAG_API_BASE_URL"] = "https://YOUR-API-ID.execute-api.ap-south-1.amazonaws.com/dev"
+rag = RagClient()  # RAG_API_BASE_URL and default AWS profile
+identifier = rag.upload("pdfs/Attention Is All You Need.pdf")
+rag.wait_document(identifier)
+result = rag.answer("How does the Transformer use attention?", identifier)
+print(result["answer"])
+print(result["sources"])
 ```
 
-The client stops when no API URL is configured. Run the upload helper cell and batch upload cell, wait for backend processing, then run the query helper cell and question cell. The question cell selects the document ID returned by the current upload. A processing-status endpoint is not yet implemented, so upload completion does not establish that the document is ready for questions.
+`index.ipynb` uses this same client. It supports batch uploads, readiness polling, retrieval diagnostics, and answer polling. To use a named profile, set `AWS_PROFILE` or pass `profile=` to `RagClient` and deployment commands. Notebook outputs stay cleared in Git.
 
-## Setup guides
+## Repository
 
-The guides describe a manual setup and refer to backend files that still need to be supplied. Consult the architecture review before deploying; the permission model, database access patterns, and API timeouts require attention.
+| Path | Responsibility |
+| --- | --- |
+| `lambda_functions/` | Six handlers, shared contracts/retrieval code, and packaged dependencies |
+| `template.yaml` | Complete SAM application infrastructure and scoped execution policies |
+| `client.py` | IAM signing, streamed uploads, readiness checks, and answer polling |
+| `scripts/deploy.py` | Credential/model preflight, build/deploy, stack outputs, optional live smoke test |
+| `scripts/smoke_test.py` | Real upload-to-answer verification against a deployed API |
+| `scripts/bootstrap_github.py` | One-time AWS OIDC bootstrap and optional GitHub variable configuration |
+| `infra/github-oidc.yaml` | OIDC trust, deployment roles, and private artifact bucket |
+| `.github/workflows/` | Tests/build and optional automated AWS deployment |
+| `tests/` | AWS-simulated integration, contracts, isolation, and failure checks |
+| `docs/` | Deployment, API contracts, ingestion, and notebook guides |
+| `pdfs/` | Five unchanged research papers for demonstrations |
 
-- [AWS infrastructure setup](docs/1-Aws_Setup.md)
-- [Upload endpoint](docs/2-Upload_Endpoint.md)
-- [Asynchronous ingestion](docs/3-Data_Ingestion.md)
-- [Retrieval and answer endpoints](docs/4-RAG_Query_API.md)
-- [Notebook usage](docs/5-Testing_Scripts.md)
-- [Sample questions](docs/Sample_Questions.md)
+## Baseline limits
+
+The default limits are 25 MiB per PDF, 500 extraction pages, 2,000 chunks per document, and 2,500 chunks per search. Retrieval is an exact document-partition query, not an indexed vector database. Ownership is per IAM user or role; sessions of the same role share that scope. A web interface, stronger multi-user login, document deletion, and measured answer-quality evaluation remain future work.
+
+[Upload API](docs/2-Upload_Endpoint.md) · [Ingestion](docs/3-Data_Ingestion.md) · [Query and answer APIs](docs/4-RAG_Query_API.md) · [Notebook usage](docs/5-Testing_Scripts.md) · [Sample questions](docs/Sample_Questions.md)

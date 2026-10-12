@@ -1,97 +1,31 @@
-Part 4: The RAG Query API
-=========================
+# Part 4: Retrieval and answer jobs
 
-This guide covers creating the two "read" endpoints (/query and /answer) that allow a user to ask questions.
+All routes require IAM-signed requests and check the caller's document/job ownership. Shared retrieval and Bedrock adapters live in [shared/rag.py](../lambda_functions/shared/rag.py).
 
-1\. Lambda 4: handle-query (The Retriever)
-------------------------------------------
+## POST /query
 
-This function finds the most relevant text chunks.
+Handler: [handle_query.py](../lambda_functions/handle_query.py).
 
-1.  **Service:** Lambda
-    
-2.  **Function Name:** handle-query
-    
-3.  **Runtime:** Python 3.11
-    
-4.  **Execution Role:** lambda-rag-execution-role
-    
-5.  **Code:** Paste the code from your lambda\_functions/handle\_query.py file (the final version with the "Robust Body Parsing" fix).
-    
-6.  **Configuration -> General configuration:** Edit and set **Timeout** to **2 minutes**.
-    
+```json
+{"question":"How does attention work?","document_id":null,"top_k":5}
+```
 
-2\. Lambda 5: generate-answer (The Generator)
----------------------------------------------
+Use the current upload's document ID for a document-specific question; `null` searches only the caller's ready documents. Questions contain 1–2,000 characters and `top_k` is 1–10. Non-ready documents return 409; searches over 2,500 chunks return 413.
 
-This function uses DeepSeek to synthesize a final answer.
+Retrieval embeds the question with Titan V2, queries document partitions with pagination, checks model/dimension compatibility, ranks cosine similarity, and returns `top_chunks`. Each result has document/chunk IDs, chunk index, filename, pages, text, and similarity score. Vectors are not exposed in the API response.
 
-1.  **Service:** Lambda
-    
-2.  **Function Name:** generate-answer
-    
-3.  **Runtime:** Python 3.11
-    
-4.  **Execution Role:** lambda-rag-execution-role
-    
-5.  **Code:** Paste the code from your lambda\_functions/generate-answer.py file (the final DeepSeek version with the "Robust Body Parsing" fix).
-    
-6.  **Configuration -> General configuration:** Edit and set **Timeout** to **1 minute**.
-    
+The store supports exact retrieval over a bounded corpus, not an indexed vector search. The owner index is eventually consistent for corpus-wide discovery; direct document status/chunk reads are consistent.
 
-3\. Connect Endpoints to API Gateway
-------------------------------------
+## POST /answer
 
-1.  **Service:** API Gateway
-    
-2.  Select your research-rag-api.
-    
-3.  Select the **root resource (/)** and click **Actions** -> **Create Resource**.
-    
-    *   **Resource Name:** query
-        
-    *   Click **Create Resource**.
-        
-4.  With /query selected, click **Actions** -> **Create Method**.
-    
-    *   Select **POST** and click the checkmark.
-        
-    *   **Integration type:** Lambda Function
-        
-    *   **Check:** Use Lambda Proxy integration
-        
-    *   **Lambda Function:** handle-query
-        
-    *   Click **Save** and **OK**.
-        
-5.  Select the **root resource (/)** again and click **Actions** -> **Create Resource**.
-    
-    *   **Resource Name:** answer
-        
-    *   Click **Create Resource**.
-        
-6.  With /answer selected, click **Actions** -> **Create Method**.
-    
-    *   Select **POST** and click the checkmark.
-        
-    *   **Integration type:** Lambda Function
-        
-    *   **Check:** Use Lambda Proxy integration
-        
-    *   **Lambda Function:** generate-answer
-        
-    *   Click **Save** and **OK**.
-        
+Handler: [generate_answer.py](../lambda_functions/generate_answer.py), API mode.
 
-4\. Re-Deploy the API (CRITICAL)
---------------------------------
+Use the same question/document/top_k fields as `/query`. The API confirms scope/readiness, creates a job, sends its ID to SQS, and responds **HTTP 202** with `job_id`, `status: QUEUED`, and `status_url`.
 
-You must re-deploy your API to make these new endpoints live.
+Do not expect a synchronous answer body. Client-supplied `top_chunks` are ignored. The worker repeats trusted retrieval from storage, invokes `us.deepseek.r1-v1:0` through Bedrock Converse, and stores an answer and source metadata. The prompt requests grounded answers, source markers, and abstention without evidence. Actual citation/answer quality still requires live evaluation.
 
-1.  Click **Actions** -> **Deploy API**.
-    
-2.  **Deployment stage:** Select your existing dev stage.
-    
-3.  **Description:** Added /query and /answer endpoints
-    
-4.  Click **Deploy**.
+## GET /answers/{job_id}
+
+Returns job status and timestamps, plus `result` on completion or `error_message` on recorded failure. Result fields are `answer`, `sources`, and `model_id`. Sources include `source_id`, filename, document/chunk IDs, chunk index, pages, similarity score, and excerpt. Status is `QUEUED`, `GENERATING`, `COMPLETED`, or `FAILED`. Jobs expire after 24 hours; another owner's job returns 404.
+
+`RagClient.answer` queues and polls automatically. Worker failures use partial SQS batch responses and retry limits; hard timeouts can temporarily leave a job in progress. Polling has a client timeout and deployment logs/queues are available for investigation.

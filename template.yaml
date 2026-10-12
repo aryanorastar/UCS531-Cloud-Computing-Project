@@ -1,0 +1,472 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: IAM-authenticated PDF ingestion and asynchronous RAG answers
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: rag-pdf
+    AllowedPattern: '[a-z][a-z0-9-]{2,23}'
+    Description: Lowercase project prefix for resources and S3 bucket names
+  StageName:
+    Type: String
+    Default: dev
+    AllowedPattern: '[a-zA-Z0-9]+'
+  EmbeddingModelId:
+    Type: String
+    Default: amazon.titan-embed-text-v2:0
+    AllowedValues: [amazon.titan-embed-text-v2:0]
+  EmbeddingDimensions:
+    Type: Number
+    Default: 256
+    AllowedValues: [256, 512, 1024]
+  GenerationModelId:
+    Type: String
+    Default: us.deepseek.r1-v1:0
+    AllowedValues: [us.deepseek.r1-v1:0]
+    Description: US cross-region profile; deploy in us-east-1, us-east-2, or us-west-2
+
+Rules:
+  SupportedDeepSeekRegion:
+    Assertions:
+      - Assert: !Contains [[us-east-1, us-east-2, us-west-2], !Ref AWS::Region]
+        AssertDescription: DeepSeek R1's US inference profile requires a supported US source region.
+
+Globals:
+  Function:
+    Runtime: python3.12
+    CodeUri: lambda_functions/
+    MemorySize: 512
+    Timeout: 30
+    Environment:
+      Variables:
+        DOCUMENTS_TABLE: !Ref DocumentsTable
+        CHUNKS_TABLE: !Ref ChunksTable
+        JOBS_TABLE: !Ref AnswerJobsTable
+        # Compute the bucket name without a bucket reference to avoid an S3 event dependency cycle.
+        DOCUMENTS_BUCKET: !Sub '${ProjectName}-${AWS::AccountId}-${AWS::Region}-pdfs'
+        EMBEDDING_MODEL_ID: !Ref EmbeddingModelId
+        EMBEDDING_DIMENSIONS: !Ref EmbeddingDimensions
+        GENERATION_MODEL_ID: !Ref GenerationModelId
+        MAX_UPLOAD_BYTES: '26214400'
+        CHUNK_CHARACTERS: '1500'
+        CHUNK_OVERLAP: '200'
+        MAX_DOCUMENT_CHUNKS: '2000'
+        MAX_RETRIEVAL_CHUNKS: '2500'
+        MAX_EMBEDDING_ATTEMPTS: '3'
+        MAX_ANSWER_TOKENS: '4096'
+
+Resources:
+  RagApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref StageName
+      EndpointConfiguration: REGIONAL
+      Auth:
+        DefaultAuthorizer: AWS_IAM
+        InvokeRole: NONE
+        ResourcePolicy:
+          CustomStatements:
+            - Effect: Deny
+              Principal: '*'
+              Action: execute-api:Invoke
+              Resource: execute-api:/*
+              Condition:
+                StringNotEquals:
+                  aws:PrincipalAccount: !Ref AWS::AccountId
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          ThrottlingRateLimit: 5
+          ThrottlingBurstLimit: 10
+          DataTraceEnabled: false
+
+  DocumentsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub '${ProjectName}-${AWS::AccountId}-${AWS::Region}-pdfs'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ObjectOwnership: BucketOwnerEnforced}]
+      VersioningConfiguration: {Status: Enabled}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      LifecycleConfiguration:
+        Rules:
+          - Id: RemoveOldVersions
+            Status: Enabled
+            NoncurrentVersionExpiration: {NoncurrentDays: 30}
+          - Id: AbortIncompleteUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload: {DaysAfterInitiation: 1}
+
+  DocumentsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DocumentsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${DocumentsBucket}'
+              - !Sub 'arn:${AWS::Partition}:s3:::${DocumentsBucket}/*'
+            Condition: {Bool: {aws:SecureTransport: false}}
+
+  DocumentsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${ProjectName}-documents'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - {AttributeName: document_id, AttributeType: S}
+        - {AttributeName: owner_id, AttributeType: S}
+        - {AttributeName: created_at, AttributeType: N}
+      KeySchema: [{AttributeName: document_id, KeyType: HASH}]
+      GlobalSecondaryIndexes:
+        - IndexName: OwnerIndex
+          KeySchema:
+            - {AttributeName: owner_id, KeyType: HASH}
+            - {AttributeName: created_at, KeyType: RANGE}
+          Projection: {ProjectionType: ALL}
+      SSESpecification: {SSEEnabled: true}
+      PointInTimeRecoverySpecification: {PointInTimeRecoveryEnabled: true}
+
+  ChunksTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${ProjectName}-chunks'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - {AttributeName: document_id, AttributeType: S}
+        - {AttributeName: chunk_id, AttributeType: S}
+      KeySchema:
+        - {AttributeName: document_id, KeyType: HASH}
+        - {AttributeName: chunk_id, KeyType: RANGE}
+      StreamSpecification: {StreamViewType: NEW_IMAGE}
+      SSESpecification: {SSEEnabled: true}
+      PointInTimeRecoverySpecification: {PointInTimeRecoveryEnabled: true}
+
+  AnswerJobsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-answer-jobs'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [{AttributeName: job_id, AttributeType: S}]
+      KeySchema: [{AttributeName: job_id, KeyType: HASH}]
+      TimeToLiveSpecification: {AttributeName: expires_at, Enabled: true}
+      SSESpecification: {SSEEnabled: true}
+
+  TextractTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ProjectName}-textract-complete'
+
+  TextractNotificationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: textract.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: {aws:SourceAccount: !Ref AWS::AccountId}
+              ArnLike:
+                aws:SourceArn: !Sub 'arn:${AWS::Partition}:textract:${AWS::Region}:${AWS::AccountId}:*'
+      Policies:
+        - PolicyName: PublishExtractionCompletion
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref TextractTopic
+
+  PipelineFailureQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${ProjectName}-pipeline-failures'
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+  AnswerFailureQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${ProjectName}-answer-failures'
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+  AnswerQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${ProjectName}-answers'
+      VisibilityTimeout: 1800
+      MessageRetentionPeriod: 86400
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt AnswerFailureQueue.Arn
+        maxReceiveCount: 3
+
+  GetPresignedUrl:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: get_presigned_url.lambda_handler
+      Timeout: 20
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: [dynamodb:PutItem, dynamodb:GetItem]
+              Resource: !GetAtt DocumentsTable.Arn
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub 'arn:${AWS::Partition}:s3:::${ProjectName}-${AWS::AccountId}-${AWS::Region}-pdfs/uploads/*'
+      Events:
+        Upload:
+          Type: Api
+          Properties: {RestApiId: !Ref RagApi, Path: /upload-url, Method: post}
+        Status:
+          Type: Api
+          Properties: {RestApiId: !Ref RagApi, Path: '/documents/{document_id}', Method: get}
+
+  ProcessDocumentBatch:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: process_document_batch.lambda_handler
+      Timeout: 60
+      Environment:
+        Variables:
+          TEXTRACT_TOPIC_ARN: !Ref TextractTopic
+          TEXTRACT_ROLE_ARN: !GetAtt TextractNotificationRole.Arn
+      DeadLetterQueue: {Type: SQS, TargetArn: !GetAtt PipelineFailureQueue.Arn}
+      EventInvokeConfig: {MaximumRetryAttempts: 2, MaximumEventAgeInSeconds: 3600}
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: [s3:GetObject, s3:GetObjectVersion]
+              Resource: !Sub 'arn:${AWS::Partition}:s3:::${ProjectName}-${AWS::AccountId}-${AWS::Region}-pdfs/uploads/*'
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt DocumentsTable.Arn
+            - Effect: Allow
+              Action: textract:StartDocumentTextDetection
+              Resource: '*'
+            - Effect: Allow
+              Action: iam:PassRole
+              Resource: !GetAtt TextractNotificationRole.Arn
+              Condition: {StringEquals: {iam:PassedToService: textract.amazonaws.com}}
+      Events:
+        PdfUpload:
+          Type: S3
+          Properties:
+            Bucket: !Ref DocumentsBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - {Name: prefix, Value: uploads/}
+                  - {Name: suffix, Value: .pdf}
+
+  HandleTextractResult:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handle_textract_result.lambda_handler
+      Timeout: 300
+      DeadLetterQueue: {Type: SQS, TargetArn: !GetAtt PipelineFailureQueue.Arn}
+      EventInvokeConfig: {MaximumRetryAttempts: 2, MaximumEventAgeInSeconds: 3600}
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: textract:GetDocumentTextDetection
+              Resource: '*'
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt DocumentsTable.Arn
+            - Effect: Allow
+              Action: dynamodb:PutItem
+              Resource: !GetAtt ChunksTable.Arn
+      Events:
+        ExtractionComplete:
+          Type: SNS
+          Properties: {Topic: !Ref TextractTopic}
+
+  GenerateEmbeddings:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: generate_embeddings.lambda_handler
+      Timeout: 300
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: [!GetAtt ChunksTable.Arn, !GetAtt DocumentsTable.Arn]
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${EmbeddingModelId}'
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt PipelineFailureQueue.Arn
+      Events:
+        PendingChunks:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt ChunksTable.StreamArn
+            StartingPosition: TRIM_HORIZON
+            BatchSize: 1
+            ParallelizationFactor: 2
+            MaximumRetryAttempts: 5
+            MaximumRecordAgeInSeconds: 3600
+            BisectBatchOnFunctionError: true
+            FunctionResponseTypes: [ReportBatchItemFailures]
+            DestinationConfig:
+              OnFailure: {Type: SQS, Destination: !GetAtt PipelineFailureQueue.Arn}
+            FilterCriteria:
+              Filters:
+                - Pattern: '{"eventName":["INSERT"],"dynamodb":{"NewImage":{"status":{"S":["PENDING"]}}}}'
+
+  HandleQuery:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handle_query.lambda_handler
+      Timeout: 28
+      MemorySize: 1024
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:Query]
+              Resource:
+                - !GetAtt DocumentsTable.Arn
+                - !Sub '${DocumentsTable.Arn}/index/OwnerIndex'
+                - !GetAtt ChunksTable.Arn
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${EmbeddingModelId}'
+      Events:
+        Query:
+          Type: Api
+          Properties: {RestApiId: !Ref RagApi, Path: /query, Method: post}
+
+  GenerateAnswer:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: generate_answer.lambda_handler
+      Timeout: 300
+      MemorySize: 1024
+      Environment:
+        Variables:
+          ANSWER_QUEUE_URL: !Ref AnswerQueue
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: [dynamodb:PutItem, dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt AnswerJobsTable.Arn
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:Query]
+              Resource:
+                - !GetAtt DocumentsTable.Arn
+                - !Sub '${DocumentsTable.Arn}/index/OwnerIndex'
+                - !GetAtt ChunksTable.Arn
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt AnswerQueue.Arn
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${EmbeddingModelId}'
+                - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${GenerationModelId}'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-east-1::foundation-model/deepseek.r1-v1:0'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-east-2::foundation-model/deepseek.r1-v1:0'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-west-2::foundation-model/deepseek.r1-v1:0'
+            - Effect: Allow
+              Action: bedrock:GetInferenceProfile
+              Resource: !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${GenerationModelId}'
+      Events:
+        Answer:
+          Type: Api
+          Properties: {RestApiId: !Ref RagApi, Path: /answer, Method: post}
+        AnswerStatus:
+          Type: Api
+          Properties: {RestApiId: !Ref RagApi, Path: '/answers/{job_id}', Method: get}
+        AnswerWork:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt AnswerQueue.Arn
+            BatchSize: 1
+            FunctionResponseTypes: [ReportBatchItemFailures]
+            ScalingConfig: {MaximumConcurrency: 2}
+
+  UploadLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub '/aws/lambda/${GetPresignedUrl}', RetentionInDays: 14}
+  StarterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub '/aws/lambda/${ProcessDocumentBatch}', RetentionInDays: 14}
+  ExtractionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub '/aws/lambda/${HandleTextractResult}', RetentionInDays: 14}
+  EmbeddingLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub '/aws/lambda/${GenerateEmbeddings}', RetentionInDays: 14}
+  QueryLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub '/aws/lambda/${HandleQuery}', RetentionInDays: 14}
+  AnswerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub '/aws/lambda/${GenerateAnswer}', RetentionInDays: 14}
+
+  PipelineFailuresAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Inspect the pipeline failure queue and affected document logs
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions: [{Name: QueueName, Value: !GetAtt PipelineFailureQueue.QueueName}]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+  AnswerFailuresAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Inspect failed answer jobs and Bedrock access or quotas
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions: [{Name: QueueName, Value: !GetAtt AnswerFailureQueue.QueueName}]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  ApiBaseUrl:
+    Value: !Sub 'https://${RagApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/${StageName}'
+  DocumentsBucketName: {Value: !Ref DocumentsBucket}
+  DocumentsTableName: {Value: !Ref DocumentsTable}
+  ChunksTableName: {Value: !Ref ChunksTable}
+  AnswerJobsTableName: {Value: !Ref AnswerJobsTable}
+  PipelineFailureQueueUrl: {Value: !Ref PipelineFailureQueue}
+  AnswerFailureQueueUrl: {Value: !Ref AnswerFailureQueue}
+  ApiInvokeResource:
+    Value: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RagApi}/${StageName}/*/*'

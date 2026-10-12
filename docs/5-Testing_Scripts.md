@@ -1,50 +1,31 @@
-# Part 5: Notebook testing and usage
+# Part 5: Tests, smoke test, and notebook
 
-The notebook is a client for an already deployed API. Backend source and reproducible deployment are still missing; see [the architecture review](../ARCHITECTURE.md) and [implementation checklist](../ROADMAP.md).
+## Local integration tests
 
-## Configure your API
-
-Set `RAG_API_BASE_URL` to your own API Gateway invoke URL, including its stage, before running the helper cells:
-
-```python
-import os
-
-os.environ["RAG_API_BASE_URL"] = "https://YOUR-API-ID.execute-api.ap-south-1.amazonaws.com/dev"
+```sh
+source .venv/bin/activate
+pytest -q
 ```
 
-The notebook derives `/upload-url`, `/query`, and `/answer` from this one setting. It raises an error when no URL is configured. Python, Jupyter, and `requests` are needed; dependency versions are not yet declared.
+Tests call all six handlers in order using the real sample PDF bytes, Moto-backed S3/DynamoDB/SQS, and controlled Textract/Bedrock responses. They verify state transitions, extraction pagination, atomic counters, duplicate delivery, ownership, retries, request validation, IAM signing, and forged-client-context rejection. No AWS account or live model call is used; OCR/model quality is outside this test's evidence.
 
-## Upload documents
+## Live smoke test
 
-1. Run the first code cell to define the upload helpers.
-2. Run the second code cell to upload all five sample PDFs, or call `upload_document` with a selected file.
-3. Use the returned document ID from your current upload.
+Deploy with `python -m scripts.deploy --smoke-test`, or test an existing stack:
 
-```python
-doc_id = upload_document("pdfs/Attention Is All You Need.pdf")
+```sh
+python -m scripts.smoke_test --api-url "$RAG_API_BASE_URL"
 ```
 
-The batch cell stores IDs in `document_ids`. A successful upload does not mean extraction and embedding have finished. The current design schedules embeddings every five minutes, and there is no status endpoint yet. Confirm backend processing completion before querying; a fixed wait is not a readiness guarantee.
+The default PDF is `pdfs/Attention Is All You Need.pdf`. Override it with `--pdf` and a question with `--question`. The test uploads, waits for `READY`, checks scoped passages, waits for an answer, and checks source document/page metadata. This uses billable AWS services. Live deployment/testing is still pending credentials.
 
-## Ask questions
+## Notebook usage
 
-1. Run the third code cell to define `test_full_rag_pipeline`.
-2. Run the fourth code cell. It selects the Transformer paper's ID from the current batch upload and asks four sample questions.
+Install the project requirements in your notebook's Python environment and open `index.ipynb` from the repository root. Set `RAG_API_BASE_URL` to your own deployed invoke URL, including its stage. The client uses the default AWS profile or `AWS_PROFILE`.
 
-For a single successful upload, use its returned ID:
+1. First cell creates `RagClient` and the upload helper.
+2. Second cell uploads all five PDFs, stores fresh IDs, and waits for each document to become ready.
+3. Third cell defines a question helper using retrieval diagnostics and queued answer polling.
+4. Fourth cell asks four questions about the uploaded Transformer paper, including an unsupported-topic question for evaluation.
 
-```python
-test_full_rag_pipeline("What is a Transformer model?", doc_id)
-```
-
-The function calls `/query` for relevant chunks, passes them to `/answer`, and prints the answer and source excerpts. For an intentionally corpus-wide question:
-
-```python
-test_full_rag_pipeline("Compare BERT and the original Transformer.", None)
-```
-
-The backend must enforce the caller's allowed document scope for both document-specific and corpus-wide requests. That enforcement cannot currently be verified because backend code is absent.
-
-## Evidence and limitations
-
-The notebook contains demonstration calls, not automated tests with expected results. Saved outputs have been cleared and should be cleared before commits. No live AWS run has been performed for this repository. API authentication, request timeouts, processing-status polling, and answer-quality evaluation are tracked as future work.
+The notebook and smoke test share `client.py`; API changes do not require independent copies of HTTP/auth/polling logic. Saved outputs and execution counts must stay cleared in commits. See [deployment prerequisites and failure investigation](DEPLOYMENT.md).
