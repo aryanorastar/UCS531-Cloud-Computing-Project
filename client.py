@@ -66,9 +66,13 @@ class RagClient:
             "POST", "/upload-url", json={"filename": path.name, "size_bytes": path.stat().st_size}
         )
         # Presigned S3 requests have their own signature; do not apply execute-api auth.
+        # urllib3 applies the connect timeout to body writes, so a slow uplink needs a longer first value.
         with path.open("rb") as pdf:
             uploaded = requests.put(
-                registration["upload_url"], data=pdf, headers=registration["upload_headers"], timeout=(5, 120)
+                registration["upload_url"],
+                data=pdf,
+                headers=registration["upload_headers"],
+                timeout=(60, 120),
             )
         if not uploaded.ok:
             raise RuntimeError(f"S3 upload failed (HTTP {uploaded.status_code}).")
