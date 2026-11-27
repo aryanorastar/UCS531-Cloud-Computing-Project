@@ -93,7 +93,9 @@ def process_record(record):
     document = get_document(document_id)
     if document["object_key"] != key or document["owner_id"] != parts[1]:
         raise ValueError("Upload key does not match registered document")
-    if document.get("textract_job_id") or document["status"] in ("EMBEDDING", "READY", "FAILED"):
+    if document.get("textract_job_id") or document["status"] in ("READY", "FAILED"):
+        return
+    if document["status"] == "EMBEDDING" and document.get("extraction_method") != "pypdf":
         return
     version = obj.get("versionId")
     if not version:
@@ -110,6 +112,10 @@ def process_record(record):
     header = client("s3").get_object(**params, Range="bytes=0-4")["Body"].read()
     if header != b"%PDF-":
         fail_document(document_id, "Uploaded file is not a PDF.")
+        return
+    if document.get("extraction_method") == "pypdf":
+        if document["status"] in ("EXTRACTING", "EMBEDDING"):
+            extract_text_fallback(document_id, params, head["ContentLength"])
         return
     try:
         table("documents").update_item(

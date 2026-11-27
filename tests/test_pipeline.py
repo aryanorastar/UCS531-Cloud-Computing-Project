@@ -13,8 +13,9 @@ import process_document_batch
 import pytest
 from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.types import TypeSerializer
+from botocore.exceptions import ClientError
 from pypdf import PdfWriter
-from shared import common, rag
+from shared import common, ingestion, rag
 
 ARYAN = "arn:aws:iam::123456789012:user/aryan"
 OTHER = "arn:aws:iam::123456789012:user/another-user"
@@ -243,6 +244,66 @@ def test_text_pdf_fallback_marks_unexpected_parser_error_failed(aws, monkeypatch
     assert document["extraction_method"] == "pypdf"
     assert "PDF text extraction failed" in document["error_message"]
     assert "malformed internal PDF object" not in document["error_message"]
+    assert common.table("chunks").scan()["Count"] == 0
+
+
+def test_text_pdf_fallback_resumes_after_partial_chunk_write(aws, monkeypatch):
+    aws["textract"].start_error = "SubscriptionRequiredException"
+    registration, s3_event = upload(aws)
+    document_id = registration["document_id"]
+    real_table = ingestion.table
+    writes = 0
+
+    class FailOneChunkWrite:
+        def __init__(self, actual):
+            self.actual = actual
+
+        def put_item(self, **kwargs):
+            nonlocal writes
+            writes += 1
+            if writes == 2:
+                raise ClientError(
+                    {"Error": {"Code": "ProvisionedThroughputExceededException", "Message": "retry"}},
+                    "PutItem",
+                )
+            return self.actual.put_item(**kwargs)
+
+    def flaky_table(kind):
+        actual = real_table(kind)
+        return FailOneChunkWrite(actual) if kind == "chunks" else actual
+
+    monkeypatch.setattr(ingestion, "table", flaky_table)
+    with pytest.raises(ClientError):
+        process_document_batch.lambda_handler(s3_event, None)
+    document = common.get_document(document_id)
+    assert document["status"] == "EMBEDDING"
+    assert document["extraction_method"] == "pypdf"
+    assert len(stream(document_id)["Records"]) == 1
+
+    process_document_batch.lambda_handler(s3_event, None)
+    document = common.get_document(document_id)
+    records = stream(document_id)
+    assert len(records["Records"]) == document["total_chunks"]
+    assert len(aws["textract"].starts) == 1
+    assert generate_embeddings.lambda_handler(records, None) == {"batchItemFailures": []}
+    assert common.get_document(document_id)["status"] == "READY"
+
+
+def test_text_pdf_fallback_rejects_encrypted_pdf(aws):
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    writer.encrypt("secret")
+    pdf = BytesIO()
+    writer.write(pdf)
+    aws["textract"].start_error = "SubscriptionRequiredException"
+    registration, s3_event = upload(aws, payload=pdf.getvalue())
+
+    process_document_batch.lambda_handler(s3_event, None)
+
+    document = common.get_document(registration["document_id"])
+    assert document["status"] == "FAILED"
+    assert document["extraction_method"] == "pypdf"
+    assert "Password-protected" in document["error_message"]
     assert common.table("chunks").scan()["Count"] == 0
 
 
