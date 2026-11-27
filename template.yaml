@@ -246,7 +246,8 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       Handler: process_document_batch.lambda_handler
-      Timeout: 60
+      Timeout: 300
+      MemorySize: 1024
       Environment:
         Variables:
           TEXTRACT_TOPIC_ARN: !Ref TextractTopic

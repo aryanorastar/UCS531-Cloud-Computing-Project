@@ -41,6 +41,7 @@ class Textract:
     def __init__(self):
         self.starts = []
         self.results = []
+        self.start_error = None
         self.pages = [
             {
                 "JobStatus": "SUCCEEDED",
@@ -69,6 +70,13 @@ class Textract:
 
     def start_document_text_detection(self, **request):
         self.starts.append(request)
+        if self.start_error:
+            from botocore.exceptions import ClientError
+
+            raise ClientError(
+                {"Error": {"Code": self.start_error, "Message": "simulated Textract error"}},
+                "StartDocumentTextDetection",
+            )
         return {"JobId": "job-" + request["ClientRequestToken"][:32]}
 
     def get_document_text_detection(self, **request):
