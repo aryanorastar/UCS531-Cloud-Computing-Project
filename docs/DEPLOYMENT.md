@@ -40,6 +40,30 @@ The observed `rag-pdf` `ApiBaseUrl` on 27 November 2026 was `https://p6i206cbk1.
 
 The `--smoke-test` option uploads the actual Transformer PDF, polls for `READY`, checks document-scoped retrieval, queues a question, and polls for an answer/source result. It first attempts Textract. If the service returns `SubscriptionRequiredException`, the starter uses pypdf to read an existing PDF text layer from the accepted S3 version. That path performs no OCR and reports `extraction_method: pypdf`; normal Textract processing reports `textract`. The smoke test prints the selected method. It uses billable AWS resources and model calls. The successful run at commit `a39914e` verifies the text-PDF cloud path and source metadata for one paper, not OCR or a benchmark of factual answer quality. Omit it to deploy without running those calls.
 
+## Run the browser demo against the existing stack
+
+The browser demo is a local Python server over the deployed IAM-protected API. It keeps AWS credentials in the server process, uses `RagClient` for signed requests and presigned S3 uploads, and serves its own page from `127.0.0.1`. It is for the operator's machine, not public hosting or independent end-user accounts. Start it from the repository root.
+
+On the evaluation Mac, an `ucs531-demo` AWS CLI login profile was verified on 27 November 2026 for this account and region. Refresh the browser-based temporary login before the evaluation; no access key needs to be copied into the page or repository. [AWS documents this `aws login` credential flow](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sign-in.html).
+
+```sh
+aws login --profile ucs531-demo --region us-east-1
+aws sts get-caller-identity --profile ucs531-demo
+```
+
+Use the repository's Python 3.12 virtual environment from [Local environment](#local-environment). The browser server needs the packages in `requirements.txt`; an environment installed from `requirements-dev.txt` already has them.
+
+```sh
+export RAG_API_BASE_URL=https://p6i206cbk1.execute-api.us-east-1.amazonaws.com/dev
+.venv/bin/python -m demo_ui.server --profile ucs531-demo --api-url "$RAG_API_BASE_URL"
+```
+
+Open `http://127.0.0.1:8080` in the same Mac browser. Choose the included Transformer sample or upload a text-based PDF of at most 10 MiB. Wait for `READY`, ask a question, and inspect the answer and its source page cards. A new upload and model answer can take several minutes and use billable AWS services. Keep the page open during the lab; stop the local server with Ctrl+C afterward. Stopping the UI does not delete the AWS stack or its retained PDFs.
+
+The 27 November 2026 live browser run followed this path: sample upload `90cedb25809042298d83b23f8eb9711e` reached `READY` at 38/38 pypdf chunks after a visible 37/38 intermediate state, then a preset question returned a Nova answer with five source cards. S4 page 5 excerpt expanded. Opening the PDF page link in a new tab was not independently checked.
+
+If the profile has expired, run `aws login --profile ucs531-demo --region us-east-1` again. If the UI cannot reach the API, check `aws sts get-caller-identity --profile ucs531-demo`, the selected region, `RAG_API_BASE_URL`, and `GET /api/health` at the local address. The CloudShell CLI smoke test above remains a separate fallback; [AWS CloudShell blocks inbound ports](https://docs.aws.amazon.com/cloudshell/latest/userguide/limits.html), so run this browser server on the operator's Mac.
+
 ## GitHub deployment with OIDC
 
 The one-time bootstrap must run using AWS credentials authorized to create IAM deployment roles and an OIDC provider:

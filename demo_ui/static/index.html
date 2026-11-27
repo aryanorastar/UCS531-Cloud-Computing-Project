@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#071923" />
+    <meta name="description" content="A live, page-cited PDF question answering demo on AWS." />
+    <title>PDF Q&A · UCS531 live demo</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="/" aria-label="PDF Q&A demo home">
+          <span class="brand-mark" aria-hidden="true">P<span>·</span></span>
+          <span class="brand-copy"><strong>PDF Q&A</strong><small>UCS531 / CLOUD COMPUTING</small></span>
+        </a>
+        <div class="connection" id="connection" role="status" aria-live="polite">
+          <span class="connection-dot" aria-hidden="true"></span>
+          <span id="connection-text">Checking AWS connection</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="intro" aria-labelledby="page-title">
+        <div>
+          <h1 id="page-title">Ask a paper.<br /><span>See the evidence.</span></h1>
+          <p>Upload a research PDF, watch the cloud index its pages, then ask a question. Every answer comes back with the passages it used.</p>
+        </div>
+        <div class="intro-fact" aria-label="Project information">
+          <span class="fact-rule" aria-hidden="true"></span>
+          <strong>LIVE AWS PIPELINE</strong>
+          <span>Six Lambda functions. One paper to a page-cited answer.</span>
+        </div>
+      </section>
+
+      <section class="pipeline" aria-label="Processing pipeline">
+        <div class="section-caption"><h2>What happens when you press Run</h2><span>Deployed services, visible state</span></div>
+        <ol id="pipeline-stages" class="stage-list">
+          <li class="stage is-current" data-stage="upload"><span class="stage-number">01</span><span class="stage-copy"><strong>Upload</strong><small>Private S3</small></span></li>
+          <li class="stage" data-stage="extract"><span class="stage-number">02</span><span class="stage-copy"><strong>Extract</strong><small>Textract / text layer</small></span></li>
+          <li class="stage" data-stage="index"><span class="stage-number">03</span><span class="stage-copy"><strong>Index</strong><small>DynamoDB + Titan</small></span></li>
+          <li class="stage" data-stage="retrieve"><span class="stage-number">04</span><span class="stage-copy"><strong>Retrieve</strong><small>Cosine similarity</small></span></li>
+          <li class="stage" data-stage="answer"><span class="stage-number">05</span><span class="stage-copy"><strong>Answer</strong><small>SQS + Nova 2 Lite</small></span></li>
+        </ol>
+      </section>
+
+      <div class="workspace">
+        <div class="paper-column">
+          <section class="panel upload-panel" aria-labelledby="paper-heading">
+            <div class="panel-heading"><h2 id="paper-heading">Choose a paper</h2></div>
+            <p class="panel-description">Start with the included Transformer paper, or upload your own text-based PDF.</p>
+            <button class="sample-button" id="sample-button" type="button">
+              <span><strong>Run with sample paper</strong><small>Attention Is All You Need · 15 pages</small></span>
+              <span class="button-arrow" aria-hidden="true">↗</span>
+            </button>
+            <details class="existing-document">
+              <summary>Already indexed a paper? Open its document ID</summary>
+              <form id="resume-form" class="resume-form">
+                <label for="existing-id">Document ID</label>
+                <div><input id="existing-id" type="text" inputmode="text" maxlength="32" placeholder="32-character document ID" autocomplete="off" spellcheck="false" /><button type="submit">Open paper</button></div>
+                <label class="sample-check"><input id="existing-sample" type="checkbox" /> This ID used the included sample paper</label>
+              </form>
+            </details>
+            <div class="or-line"><span>OR USE YOUR PDF</span></div>
+            <form id="upload-form" novalidate>
+              <div class="drop-zone" id="drop-zone">
+                <input id="pdf-input" name="file" type="file" accept=".pdf,application/pdf" aria-describedby="upload-note" />
+                <label for="pdf-input"><strong id="drop-title">Choose a PDF or drop it here</strong><span id="drop-subtitle">The file stays private in your AWS account.</span></label>
+              </div>
+              <p class="field-note" id="upload-note">This account's fallback reads existing text only. Use a text-based PDF under 10 MB; scanned pages need Textract OCR access.</p>
+              <button class="button button-quiet upload-submit" id="upload-button" type="submit" disabled>Index selected PDF <span aria-hidden="true">→</span></button>
+            </form>
+            <p id="upload-error" class="inline-alert" role="alert" hidden></p>
+          </section>
+
+          <section class="panel document-panel" aria-labelledby="document-heading">
+            <div class="panel-heading"><h2 id="document-heading">Document status</h2><span class="state-chip" id="document-chip">Waiting</span></div>
+            <div id="document-empty" class="document-empty"><span class="empty-line" aria-hidden="true"></span><p>Your paper's progress will appear here after upload.</p></div>
+            <div id="document-detail" hidden>
+              <div class="document-name-row"><strong id="document-name"></strong><span id="document-filetype">PDF</span></div>
+              <div class="progress-track" aria-label="Indexing progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="progress-fill"></span></div>
+              <div class="progress-row"><span id="document-message">Waiting for upload</span><strong id="document-count">0 / 0 chunks</strong></div>
+              <dl class="document-meta"><div><dt>Text extraction</dt><dd id="document-method">Pending</dd></div><div><dt>Document ID</dt><dd id="document-id">Pending</dd></div></dl>
+            </div>
+            <p id="document-error" class="inline-alert" role="alert" hidden></p>
+          </section>
+        </div>
+
+        <div class="answer-column">
+          <section class="panel ask-panel" aria-labelledby="ask-heading">
+            <div class="panel-heading"><h2 id="ask-heading">Ask the paper</h2></div>
+            <form id="question-form">
+              <label class="question-label" for="question-input">Your question</label>
+              <textarea id="question-input" rows="3" maxlength="2000" placeholder="What is the role of self-attention in the Transformer?" disabled></textarea>
+              <div class="question-helper"><span id="question-hint">Choose a paper first to unlock questions.</span><span id="question-length">0 / 2000</span></div>
+              <div class="suggestions"><span>TRY A QUESTION</span><button class="suggestion" type="button" data-question="How does the Transformer use self-attention in the encoder and decoder?" disabled>How does self-attention work?</button><button class="suggestion" type="button" data-question="Why does the Transformer use multi-head attention?" disabled>Why multi-head attention?</button></div>
+              <button class="button button-primary ask-submit" id="ask-button" type="submit" disabled>Find answer <span aria-hidden="true">→</span></button>
+            </form>
+            <p id="answer-error" class="inline-alert" role="alert" hidden></p>
+          </section>
+
+          <section class="panel answer-panel" aria-labelledby="answer-heading" aria-live="polite">
+            <div class="panel-heading"><h2 id="answer-heading">Grounded answer</h2><span class="state-chip" id="answer-chip">Not started</span></div>
+            <div class="answer-empty" id="answer-empty"><span class="answer-placeholder" aria-hidden="true">“</span><p>Ask a question to see Nova's answer, checked against the paper's retrieved passages.</p></div>
+            <div id="answer-loading" class="answer-loading" hidden><p id="answer-loading-label">Finding relevant passages…</p><div class="skeleton-line"></div><div class="skeleton-line short"></div><div class="skeleton-line medium"></div></div>
+            <div id="answer-result" hidden><div class="answer-text" id="answer-text"></div><div class="answer-footer"><span id="answer-model">Amazon Nova 2 Lite</span><button type="button" class="text-button" id="copy-answer">Copy answer</button></div></div>
+          </section>
+
+          <section class="panel sources-panel" aria-labelledby="sources-heading">
+            <div class="panel-heading"><h2 id="sources-heading">Source pages <span id="source-count" class="count-badge">0</span></h2></div>
+            <p id="sources-empty" class="sources-empty">Page references and original passages will appear with the answer.</p>
+            <div id="sources-list" class="sources-list" hidden></div>
+          </section>
+        </div>
+      </div>
+
+      <footer class="site-footer"><p>PDF Q&A is a lab demonstration of a deployed serverless RAG pipeline. Answers are model-generated; inspect their cited passages.</p><p>Current AWS account: text-layer fallback available. Scanned-page OCR remains unverified.</p></footer>
+    </main>
+  </body>
+</html>

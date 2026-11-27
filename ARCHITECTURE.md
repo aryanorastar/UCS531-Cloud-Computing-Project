@@ -8,11 +8,27 @@ The imported repository contained only a notebook, manual guides, and five resea
 
 The previous deployment endpoint, stored document IDs, saved outputs, upstream Git remote, and inherited active history were removed before implementation. This project has no dependency on that deployment. The research PDF files are unchanged.
 
-No AWS profile or deployment role was available in the local evaluation workspace on 27 November 2026. A separate AWS CloudShell session in `us-east-1`, signed in as the account root identity, successfully invoked Titan V2 directly and invoked `us.amazon.nova-2-lite-v1:0` through Bedrock Converse. DeepSeek R1 invocation in the same account was blocked as a Legacy model, so the generation profile was changed to Nova 2 Lite. CloudFormation deployed the `rag-pdf` stack. The first live smoke uploaded the Transformer PDF through the API, then Textract `StartDocumentTextDetection` returned `SubscriptionRequiredException` under this account's Free plan. No billing-plan change was made. A bounded pypdf text-layer fallback was added; live testing exposed a missing starter permission to write chunks, which commit `a39914e` granted only on the chunks table. The next live smoke succeeded end to end using that fallback.
+Initially, no AWS profile or deployment role was available in the local evaluation workspace on 27 November 2026. A separate AWS CloudShell session in `us-east-1`, signed in as the account root identity, successfully invoked Titan V2 directly and invoked `us.amazon.nova-2-lite-v1:0` through Bedrock Converse. DeepSeek R1 invocation in the same account was blocked as a Legacy model, so the generation profile was changed to Nova 2 Lite. CloudFormation deployed the `rag-pdf` stack. The first live smoke uploaded the Transformer PDF through the API, then Textract `StartDocumentTextDetection` returned `SubscriptionRequiredException` under this account's Free plan. No billing-plan change was made. A bounded pypdf text-layer fallback was added; live testing exposed a missing starter permission to write chunks, which commit `a39914e` granted only on the chunks table. The next live smoke succeeded end to end using that fallback. A temporary local AWS login profile was configured later for the browser demo; no least-privilege deployment role has been provisioned.
 
 At commit `a39914e`, `python -m scripts.deploy --smoke-test` from AWS CloudShell uploaded a fresh Transformer PDF (`6512893e0649491591ee0d69c68a3ff2`). The document reached `READY` with 38 chunks and `extraction_method: pypdf`. Document-scoped retrieval returned passages, and the queued Nova 2 Lite answer completed with a nonempty answer and sources from that document, including page 2 for S1 and page 5 for S2. The answer described stacked self-attention, an encoder-decoder structure, and multi-head attention with citation markers. This verifies the deployed text-PDF path through API Gateway, S3, Lambda, DynamoDB Streams, Titan, SQS, and Nova for that sample and identity. It is not a measured answer-quality benchmark. Textract OCR was neither enabled nor verified.
 
 `scripts/local_demo.py` gives a repeatable walkthrough of the same handlers using actual text extracted from the Transformer sample PDF. Moto supplies S3, DynamoDB, and SQS; pypdf substitutes for Textract; deterministic local vector and answer functions substitute for Bedrock. It exercises orchestration, source pages, and owner isolation without cloud credentials. It does not test AWS trigger delivery, OCR, model quality, latency, or cost. [EVALUATION_GUIDE.md](docs/EVALUATION_GUIDE.md) provides the presentation flow and precise claims.
+
+## Browser demo boundary
+
+The browser demo is an operator-run Python server in `demo_ui/`. The browser sends a PDF and questions to that server on the same origin; the server uses the existing `RagClient` and its AWS credential chain to register/upload the PDF, poll document and answer state, and call the IAM-protected API. AWS credentials stay in the server process. The deployed API, Lambda handlers, S3 storage, and document ownership checks are unchanged. A browser session through one server uses that server's IAM principal and document scope; the demo does not provide independent user accounts or a public authentication system.
+
+```mermaid
+flowchart LR
+    Browser[Demo browser] -->|Local HTTP| Demo[demo_ui server]
+    Demo -->|RagClient and SigV4| API[Existing API Gateway]
+    Demo -->|Presigned upload via RagClient| S3[Private S3 bucket]
+    API --> Pipeline[Existing Lambda and RAG pipeline]
+```
+
+The UI shows processing states and progress before asking a question, then polls the answer job and presents the returned answer with stored source metadata. The local server is a presentation adapter, not a new cloud service. Exposing it to other people or hosting it publicly would require separate authentication, isolation, and network controls. Its launch procedure is in [DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+On 27 November 2026, the Mac browser at `localhost:8080` used the temporary `ucs531-demo` AWS CLI profile against the deployed `us-east-1` API. The sample button uploaded the Transformer PDF as document `90cedb25809042298d83b23f8eb9711e`; the UI showed 37/38 indexed chunks and then `READY` at 38/38 with `extraction_method: pypdf`. A preset question completed with a Nova 2 Lite answer and five source cards. The S4 card expanded to show its page 5 excerpt. This verifies the browser → local signed client → deployed text-PDF path for one sample. The generated PDF page-link target was present, but new-tab navigation was not independently verified. Browser failure displays and other PDFs need separate checks.
 
 ## Ingestion pipeline
 
@@ -107,4 +123,4 @@ Logs are retained for 14 days. Failure queues have CloudWatch alarms; alarm noti
 
 ## Next acceptance gate
 
-The live text-PDF cloud path is verified for the Transformer sample. Next, evaluate answer and citation quality across the included papers, including unanswerable questions, and measure latency and cost. Textract OCR requires separate account access and an actual scanned-PDF test; the Free-plan `SubscriptionRequiredException` does not prove OCR works. Recovery/deletion and a possible indexed vector store or browser interface remain follow-up work.
+The live text-PDF cloud path and one browser demo flow are verified for the Transformer sample. Next, check the browser's failure display and PDF new-tab navigation, then evaluate answer and citation quality across the included papers, including unanswerable questions, and measure latency and cost. Textract OCR requires separate account access and an actual scanned-PDF test; the Free-plan `SubscriptionRequiredException` does not prove OCR works. Recovery/deletion, a possible indexed vector store, and a production multi-user web application remain follow-up work.
