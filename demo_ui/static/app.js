@@ -225,6 +225,7 @@ function narrate(parts, tone = "active", key = "") {
     target.classList.toggle("caret", count < total);
   };
   target.title = segments.map((seg) => seg.text).join("");
+  if (!instant) $("sr-live").textContent = target.title; // screen readers hear each event once, not every typed frame
   if (instant || window.matchMedia("(prefers-reduced-motion: reduce)").matches) { paint(total); return; }
   let shown = 0;
   const stepSize = Math.max(1, Math.ceil(total / 70));
@@ -355,7 +356,9 @@ function buildTopology() {
   els.compactStrip.replaceChildren(...order.map((id) => {
     if (id === "|") return h("li", { class: "sep", "aria-hidden": "true", text: "·" });
     const item = nodeById(id);
-    const chip = h("li", { "data-kind": item.kind, title: item.title, onclick: (event) => { event.stopPropagation(); openNodeCard(id); } }, iconSvg(item.icon), h("span", { text: item.title }));
+    const open = (event) => { event.stopPropagation(); openNodeCard(id); };
+    const chip = h("li", { "data-kind": item.kind, title: item.title, tabindex: 0, role: "button", "aria-label": `${item.title}: details`, onclick: open,
+      onkeydown: (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(event); } } }, iconSvg(item.icon), h("span", { text: item.title }));
     refs.chips[id] = chip;
     return chip;
   }));
@@ -505,24 +508,45 @@ function cycleArch() {
 }
 
 // ── PDF rendering (PDF.js) ────────────────────────────────────────────────────
-const pdfCache = new Map();
+// One shared worker for every document; without it PDF.js starts a new Web Worker per getDocument().
+const pdfWorker = new pdfjsLib.PDFWorker();
+const pdfCache = new Map(); // url -> Promise<PDFDocumentProxy>, most recent last
+const KEEP_DOCS = 3;
 function loadPdf(url) {
-  if (!pdfCache.has(url)) {
-    pdfCache.set(url, pdfjsLib.getDocument({ url, isEvalSupported: false }).promise.catch((error) => { pdfCache.delete(url); throw error; }));
+  if (pdfCache.has(url)) {
+    const cached = pdfCache.get(url);
+    pdfCache.delete(url); pdfCache.set(url, cached); // mark as most recently used
+    return cached;
   }
-  return pdfCache.get(url);
+  const promise = pdfjsLib.getDocument({ url, worker: pdfWorker, isEvalSupported: false }).promise
+    .catch((error) => { pdfCache.delete(url); throw error; });
+  pdfCache.set(url, promise);
+  for (const [oldUrl, oldPromise] of pdfCache) {
+    if (pdfCache.size <= KEEP_DOCS) break;
+    if (oldUrl === url || oldUrl === viewer.url) continue;
+    pdfCache.delete(oldUrl);
+    oldPromise.then((doc) => doc.destroy()).catch(() => {});
+  }
+  return promise;
 }
 
-const viewer = { url: null, doc: null, token: 0, zoom: 1, aspect: 1.294, observer: null, hl: [] };
+const viewer = { url: null, doc: null, token: 0, jump: 0, zoom: 1, aspect: 1.294, observer: null, keeper: null, hl: [], pending: null };
 
 function pageWidth() {
   const avail = Math.max(240, els.pages.clientWidth - 40);
   return Math.round(Math.min(avail, 900) * viewer.zoom);
 }
 
+function scrollPages(top, smooth) {
+  // Programmatic jumps scroll instantly so a long jump does not render every page it passes.
+  els.pages.style.scrollBehavior = smooth ? "smooth" : "auto";
+  els.pages.scrollTo({ top, behavior: smooth ? "smooth" : "auto" });
+}
+
 async function openViewer(url) {
   if (!url) {
-    viewer.url = null; viewer.doc = null; viewer.token += 1;
+    viewer.url = null; viewer.doc = null; viewer.token += 1; viewer.pending = null;
+    viewer.observer?.disconnect(); viewer.keeper?.disconnect();
     els.pages.replaceChildren(); els.viewerBar.hidden = true; els.readerEmpty.hidden = false;
     return null;
   }
@@ -530,32 +554,39 @@ async function openViewer(url) {
   if (viewer.url === url && viewer.pending) return viewer.pending;
   const token = ++viewer.token;
   viewer.url = url; viewer.doc = null; viewer.hl = [];
+  viewer.observer?.disconnect(); viewer.keeper?.disconnect();
   els.readerEmpty.hidden = true;
   els.pages.replaceChildren(h("div", { class: "page is-loading", style: `width:${pageWidth()}px;height:${Math.round(pageWidth() * 1.29)}px` }));
-  viewer.pending = (async () => {
-    let doc;
-    try { doc = await loadPdf(url); } catch {
-      if (token !== viewer.token) return null;
-      els.pages.replaceChildren(); els.readerEmpty.hidden = false;
-      els.readerEmptyText.textContent = "This PDF could not be rendered here. Answers and page citations still work.";
-      return null;
-    }
+  const fail = () => {
     if (token !== viewer.token) return null;
-    const first = await doc.getPage(1);
-    const base = first.getViewport({ scale: 1 });
+    els.pages.replaceChildren(); els.viewerBar.hidden = true; els.readerEmpty.hidden = false;
+    els.readerEmptyText.textContent = "This PDF could not be rendered here. Answers and page citations still work.";
+    return null;
+  };
+  viewer.pending = (async () => {
+    let doc, base;
+    try {
+      doc = await loadPdf(url);
+      if (token !== viewer.token) return null;
+      if (!doc.numPages) return fail();
+      base = (await doc.getPage(1)).getViewport({ scale: 1 });
+    } catch { return fail(); }
+    if (token !== viewer.token) return null;
     viewer.doc = doc; viewer.aspect = base.height / base.width;
-    viewer.observer?.disconnect();
     viewer.observer = new IntersectionObserver((entries) => {
       for (const entry of entries) if (entry.isIntersecting) renderPage(Number(entry.target.dataset.page));
-    }, { root: els.pages, rootMargin: "900px 0px" });
+    }, { root: els.pages, rootMargin: "700px 0px" });
+    // Pages far outside the view give their canvas back, so a 144-page paper does not hold every bitmap.
+    viewer.keeper = new IntersectionObserver((entries) => {
+      for (const entry of entries) if (!entry.isIntersecting) freePage(entry.target);
+    }, { root: els.pages, rootMargin: "2600px 0px" });
     const nodes = [];
     for (let n = 1; n <= doc.numPages; n += 1) {
-      const page = h("div", { class: "page is-loading", "data-page": n }, h("canvas"), h("div", { class: "hl-layer" }), h("span", { class: "page-num", text: `p. ${n}` }));
-      nodes.push(page);
+      nodes.push(h("div", { class: "page is-loading", "data-page": n }, h("canvas"), h("div", { class: "hl-layer" }), h("span", { class: "page-num", text: `p. ${n}` })));
     }
     els.pages.replaceChildren(...nodes);
-    nodes.forEach((page) => viewer.observer.observe(page));
-    els.pages.scrollTop = 0;
+    nodes.forEach((page) => { viewer.observer.observe(page); viewer.keeper.observe(page); });
+    scrollPages(0, false);
     els.viewerPages.textContent = doc.numPages;
     els.viewerPage.textContent = "1";
     els.viewerBar.hidden = false;
@@ -563,6 +594,17 @@ async function openViewer(url) {
     return doc;
   })().finally(() => { if (token === viewer.token) viewer.pending = null; });
   return viewer.pending;
+}
+
+function freePage(page) {
+  if (!page.dataset.rendered) return;
+  // Observer entries arrive late; re-check the real distance so a page now on screen is never blanked.
+  const view = els.pages.getBoundingClientRect();
+  const box = page.getBoundingClientRect();
+  if (box.bottom > view.top - 2400 && box.top < view.bottom + 2400) return;
+  page.querySelector("canvas").replaceWith(document.createElement("canvas"));
+  page.dataset.rendered = "";
+  page.classList.add("is-loading");
 }
 
 function layoutPages() {
@@ -580,43 +622,79 @@ function layoutPages() {
   const top = els.pages.scrollTop;
   const bottom = top + els.pages.clientHeight;
   for (const page of els.pages.querySelectorAll(".page[data-page]")) {
-    if (page.offsetTop < bottom + 900 && page.offsetTop + page.offsetHeight > top - 900) renderPage(Number(page.dataset.page));
+    if (page.offsetTop < bottom + 700 && page.offsetTop + page.offsetHeight > top - 700) renderPage(Number(page.dataset.page));
   }
 }
 
+// Render queue: at most two pages at once, the page a citation targets goes first.
 const renderJobs = new Map();
-function renderPage(n) {
+const renderQueue = [];
+let renderActive = 0;
+function renderPage(n, { priority = false } = {}) {
   const page = els.pages.querySelector(`.page[data-page="${n}"]`);
   if (!page || !viewer.doc || !page.dataset.width) return Promise.resolve();
   const width = Number(page.dataset.width);
   if (page.dataset.rendered === String(width)) return Promise.resolve();
-  const key = `${viewer.url}#${n}@${width}`;
-  if (renderJobs.has(key)) return renderJobs.get(key);
-  const doc = viewer.doc;
-  const job = (async () => {
-    const pdfPage = await doc.getPage(n);
-    if (doc !== viewer.doc) return;
-    const base = pdfPage.getViewport({ scale: 1 });
-    const ratio = base.height / base.width;
-    page.dataset.ratio = String(ratio);
-    page.style.height = `${Math.round(width * ratio)}px`;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const viewport = pdfPage.getViewport({ scale: (width / base.width) * dpr });
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.floor(viewport.width);
-    canvas.height = Math.floor(viewport.height);
-    await pdfPage.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
-    if (doc !== viewer.doc || page.dataset.width !== String(width)) return;
-    page.querySelector("canvas").replaceWith(canvas);
-    page.classList.remove("is-loading");
-    page.dataset.rendered = String(width);
-  })().catch(() => { /* a cancelled or failed render leaves the placeholder */ }).finally(() => renderJobs.delete(key));
+  const key = `${viewer.token}#${n}@${width}`;
+  if (renderJobs.has(key)) {
+    if (priority) { const i = renderQueue.findIndex((job) => job.key === key); if (i > 0) renderQueue.unshift(...renderQueue.splice(i, 1)); }
+    return renderJobs.get(key).promise;
+  }
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  const job = { key, n, page, width, token: viewer.token, doc: viewer.doc, resolve, promise };
   renderJobs.set(key, job);
-  return job;
+  if (priority) renderQueue.unshift(job); else renderQueue.push(job);
+  pumpRenders();
+  return promise;
+}
+
+function pumpRenders() {
+  while (renderActive < 2 && renderQueue.length) {
+    const job = renderQueue.shift();
+    renderActive += 1;
+    runRender(job).catch(() => { /* a failed page keeps its placeholder */ }).finally(() => {
+      renderActive -= 1;
+      renderJobs.delete(job.key);
+      job.resolve();
+      pumpRenders();
+    });
+  }
+}
+
+async function runRender({ n, page, width, token, doc }) {
+  if (token !== viewer.token || !page.isConnected || page.dataset.width !== String(width)) return;
+  const pdfPage = await doc.getPage(n);
+  if (token !== viewer.token || !page.isConnected) return;
+  const base = pdfPage.getViewport({ scale: 1 });
+  const ratio = base.height / base.width;
+  page.dataset.ratio = String(ratio);
+  page.style.height = `${Math.round(width * ratio)}px`;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const viewport = pdfPage.getViewport({ scale: (width / base.width) * dpr });
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+  await pdfPage.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+  if (token !== viewer.token || !page.isConnected || page.dataset.width !== String(width)) return;
+  page.querySelector("canvas").replaceWith(canvas);
+  page.classList.remove("is-loading");
+  page.dataset.rendered = String(width);
+}
+
+function renderVisible() {
+  if (!viewer.doc) return;
+  const top = els.pages.scrollTop - 300;
+  const bottom = els.pages.scrollTop + els.pages.clientHeight + 300;
+  for (const page of els.pages.querySelectorAll(".page[data-page]")) {
+    if (page.offsetTop > bottom) break;
+    if (page.offsetTop + page.offsetHeight >= top && !page.dataset.rendered) renderPage(Number(page.dataset.page));
+  }
 }
 
 function updateCurrentPage() {
   if (!viewer.doc) return;
+  renderVisible();
   const mark = els.pages.scrollTop + els.pages.clientHeight * 0.3;
   let current = 1;
   for (const page of els.pages.querySelectorAll(".page[data-page]")) {
@@ -627,7 +705,9 @@ function updateCurrentPage() {
 
 const norm = (text) => String(text).toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 
-async function findPassage(pdfPage, viewport, excerpt) {
+// Returns the cited lines as fractions of the page size, so highlights stay put through zoom and resize.
+async function findPassage(pdfPage, excerpt) {
+  const base = pdfPage.getViewport({ scale: 1 });
   const content = await pdfPage.getTextContent();
   let joined = "";
   const spans = [];
@@ -658,20 +738,22 @@ async function findPassage(pdfPage, viewport, excerpt) {
     const item = content.items[index];
     const [a, b, c, d, tx, ty] = item.transform;
     const fontH = Math.hypot(c, d) || Math.hypot(a, b) || 10;
-    const r = viewport.convertToViewportRectangle([tx, ty - fontH * 0.22, tx + (item.width || 0), ty + fontH * 0.92]);
+    const r = base.convertToViewportRectangle([tx, ty - fontH * 0.22, tx + (item.width || 0), ty + fontH * 0.92]);
     rects.push({ left: Math.min(r[0], r[2]), top: Math.min(r[1], r[3]), width: Math.abs(r[2] - r[0]), height: Math.abs(r[3] - r[1]) });
   }
   rects.sort((p, q) => p.top - q.top || p.left - q.left);
   const lines = [];
   for (const rect of rects) {
-    const line = lines.find((l) => Math.abs(l.top - rect.top) < rect.height * 0.5 && rect.left - (l.left + l.width) < 24);
+    const line = lines.find((l) => Math.abs(l.top - rect.top) < rect.height * 0.5 && rect.left - (l.left + l.width) < 14);
     if (line) {
       const right = Math.max(line.left + line.width, rect.left + rect.width);
       line.left = Math.min(line.left, rect.left); line.width = right - line.left;
       line.height = Math.max(line.height, rect.height);
     } else lines.push({ ...rect });
   }
-  return lines.filter((l) => l.width > 2);
+  return lines.filter((l) => l.width > 1).map((l) => ({
+    left: (l.left - 1.5) / base.width, top: l.top / base.height, width: (l.width + 3) / base.width, height: l.height / base.height,
+  }));
 }
 
 function clearHighlights() {
@@ -687,74 +769,91 @@ function jumpPill(label) {
   setTimeout(() => pill.remove(), 1700);
 }
 
+const pct = (v) => `${(v * 100).toFixed(3)}%`;
+
 async function goToPage(n, { excerpt = null, label = null } = {}) {
   if (!n) return false;
   const entry = currentEntry();
   if (!entry?.pdf_url) return false;
-  const doc = await openViewer(entry.pdf_url);
-  if (!doc) return false;
-  const pageNum = Math.min(Math.max(1, n), doc.numPages);
-  const page = els.pages.querySelector(`.page[data-page="${pageNum}"]`);
-  if (!page) return false;
-  clearHighlights();
-  els.pages.scrollTo({ top: page.offsetTop - 14, behavior: "smooth" });
-  await renderPage(pageNum);
-  page.classList.add("is-target");
-  setTimeout(() => page.classList.remove("is-target"), 1800);
-  jumpPill(label ? `${label} · page ${pageNum}` : `Page ${pageNum}`);
-  logEvent("state", `reader → page ${pageNum}${label ? ` (${label})` : ""}`);
-  if (!excerpt) return true;
-  const pdfPage = await doc.getPage(pageNum);
-  const width = Number(page.dataset.width);
-  const viewport = pdfPage.getViewport({ scale: width / pdfPage.getViewport({ scale: 1 }).width });
-  const lines = await findPassage(pdfPage, viewport, excerpt);
-  if (!lines.length) return true;
-  const layer = page.querySelector(".hl-layer");
-  lines.forEach((line, i) => {
-    const node = h("div", { class: "hl", style: `left:${line.left - 2}px;top:${line.top}px;width:${line.width + 4}px;height:${line.height}px;animation-delay:${i * 40}ms` });
-    layer.append(node);
-    viewer.hl.push(node);
-  });
-  if (label) {
-    const tag = h("div", { class: "hl-tag", style: `left:${Math.max(36, lines[0].left - 6)}px;top:${lines[0].top}px`, text: label });
-    layer.append(tag);
-    viewer.hl.push(tag);
+  const jump = ++viewer.jump; // a newer jump cancels this one after every await
+  try {
+    const doc = await openViewer(entry.pdf_url);
+    if (!doc || jump !== viewer.jump || doc !== viewer.doc) return false;
+    const pageNum = Math.min(Math.max(1, n), doc.numPages);
+    const page = els.pages.querySelector(`.page[data-page="${pageNum}"]`);
+    if (!page) return false;
+    clearHighlights();
+    scrollPages(page.offsetTop - 14, false);
+    await renderPage(pageNum, { priority: true });
+    if (jump !== viewer.jump || doc !== viewer.doc || !page.isConnected) return false;
+    page.classList.add("is-target");
+    setTimeout(() => page.classList.remove("is-target"), 1800);
+    jumpPill(label ? `${label} · page ${pageNum}` : `Page ${pageNum}`);
+    logEvent("state", `reader → page ${pageNum}${label ? ` (${label})` : ""}`);
+    if (!excerpt) return true;
+    const lines = await findPassage(await doc.getPage(pageNum), excerpt);
+    if (jump !== viewer.jump || doc !== viewer.doc || !page.isConnected || !lines.length) return true;
+    const layer = page.querySelector(".hl-layer");
+    lines.forEach((line, i) => {
+      const node = h("div", { class: "hl", style: `left:${pct(line.left)};top:${pct(line.top)};width:${pct(line.width)};height:${pct(line.height)};animation-delay:${i * 40}ms` });
+      layer.append(node);
+      viewer.hl.push(node);
+    });
+    if (label) {
+      const tag = h("div", { class: "hl-tag", style: `left:max(36px, calc(${pct(lines[0].left)} - 6px));top:${pct(lines[0].top)}`, text: label });
+      layer.append(tag);
+      viewer.hl.push(tag);
+    }
+    scrollPages(page.offsetTop + Math.max(0, lines[0].top * page.offsetHeight - 90), true);
+    return true;
+  } catch {
+    return false; // a page that fails to parse must not break the answer flow
   }
-  els.pages.scrollTo({ top: page.offsetTop + Math.max(0, lines[0].top - 90), behavior: "smooth" });
-  return true;
 }
 
+// Covers: rendered once from page 1, kept in memory and (when storage allows) in localStorage.
+const coverMem = new Map();
+const coverQueued = new Set();
 async function coverFor(url) {
-  const key = KEYS.cover + url;
-  const cached = store.get(key);
-  if (cached) return cached;
-  const doc = await loadPdf(url);
-  const page = await doc.getPage(1);
-  const base = page.getViewport({ scale: 1 });
-  const viewport = page.getViewport({ scale: 132 / base.width });
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.floor(viewport.width); canvas.height = Math.floor(viewport.height);
-  await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
-  const data = canvas.toDataURL("image/jpeg", 0.82);
-  store.set(key, data);
-  return data;
+  if (coverMem.has(url)) return coverMem.get(url);
+  const cached = store.get(KEYS.cover + url);
+  if (cached) { coverMem.set(url, cached); return cached; }
+  const doc = await pdfjsLib.getDocument({ url, worker: pdfWorker, isEvalSupported: false }).promise;
+  try {
+    const page = await doc.getPage(1);
+    const base = page.getViewport({ scale: 1 });
+    const viewport = page.getViewport({ scale: 132 / base.width });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.floor(viewport.width); canvas.height = Math.floor(viewport.height);
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+    const data = canvas.toDataURL("image/jpeg", 0.82);
+    coverMem.set(url, data);
+    store.set(KEYS.cover + url, data);
+    return data;
+  } finally {
+    doc.destroy(); // the cover's document is not needed after its thumbnail exists
+  }
+}
+
+function paintCovers(url, data) {
+  document.querySelectorAll("img[data-cover]").forEach((img) => {
+    if (img.dataset.cover !== url) return;
+    img.src = data; img.hidden = false; img.parentElement?.querySelector(".cover-fallback")?.remove();
+  });
 }
 
 const coverQueue = [];
 let coverBusy = false;
-function queueCover(url, img) {
-  coverQueue.push([url, img]);
+function queueCover(url) {
+  if (coverQueued.has(url)) return;
+  coverQueued.add(url);
+  coverQueue.push(url);
   if (coverBusy) return;
   coverBusy = true;
   (async () => {
     while (coverQueue.length) {
-      const [src, target] = coverQueue.shift();
-      try {
-        const data = await coverFor(src);
-        // The library may have re-rendered; paint every cover that shows this PDF.
-        document.querySelectorAll(`img[data-cover="${CSS.escape(src)}"]`).forEach((img) => { img.src = data; img.hidden = false; img.parentElement.querySelector(".cover-fallback")?.remove(); });
-        target.src = data; target.hidden = false; target.parentElement?.querySelector(".cover-fallback")?.remove();
-      } catch { /* the fallback lines stay */ }
+      const src = coverQueue.shift();
+      try { paintCovers(src, await coverFor(src)); } catch { coverQueued.delete(src); /* fallback lines stay */ }
     }
     coverBusy = false;
   })();
@@ -783,8 +882,8 @@ function coverNode(url) {
   const img = h("img", { alt: "", hidden: true, "data-cover": url || null });
   const cover = h("span", { class: "cover" }, img, h("span", { class: "cover-fallback" }, h("span"), h("span"), h("span")));
   if (url) {
-    const cached = store.get(KEYS.cover + url);
-    if (cached) { img.src = cached; img.hidden = false; cover.querySelector(".cover-fallback").remove(); } else queueCover(url, img);
+    const cached = coverMem.get(url) || store.get(KEYS.cover + url);
+    if (cached) { coverMem.set(url, cached); img.src = cached; img.hidden = false; cover.querySelector(".cover-fallback").remove(); } else queueCover(url);
   }
   return cover;
 }
@@ -939,6 +1038,8 @@ async function openById(id) {
 }
 
 async function forget(id) {
+  const pdfUrl = state.library.find((entry) => entry.document_id === id)?.pdf_url;
+  if (pdfUrl && !state.papers.some((paper) => paper.url === pdfUrl)) { try { localStorage.removeItem(KEYS.cover + pdfUrl); } catch { /* ignore */ } coverMem.delete(pdfUrl); }
   try {
     await api(`/api/library/${id}`, { method: "DELETE" });
     if (state.current === id) state.current = null;
@@ -1004,7 +1105,8 @@ function renderChunkMap() {
   const bin = Math.max(1, Math.ceil(total / 180));
   const cells = Math.ceil(total / bin);
   if (els.chunkmap.dataset.total !== String(total)) {
-    els.chunkmap.style.setProperty("--cols", String(Math.min(cells, 60)));
+    els.chunkmap.style.setProperty("--cols", String(cells <= 90 ? cells : Math.ceil(cells / 2)));
+    els.chunkmap.classList.toggle("is-dense", cells > 60);
     els.chunkmap.replaceChildren(...Array.from({ length: cells }, (_, i) => h("span", { "data-cell": i })));
     els.chunkmap.dataset.total = String(total);
     els.chunkmap.dataset.done = doc.status === "READY" ? String(cells) : "0";
@@ -1150,7 +1252,7 @@ function renderThread() {
 
 function buildTurn(turn) {
   const steps = ["Retrieve", "Queue", "Generate", "Cite"].map((label) =>
-    h("div", { class: "step" }, h("div", { class: "step-bar" }), h("div", { class: "step-label" }, h("span", { text: label }), h("span", { class: "step-time" }))));
+    h("div", { class: "step" }, h("div", { class: "step-bar" }), h("div", { class: "step-label" }, h("span", { text: label }), h("span", { class: "step-time", "aria-hidden": "true" }))));
   return h("article", { class: "turn" },
     h("div", { class: "turn-q" }, h("p", { text: turn.question })),
     h("div", { class: "steps" }, steps),
@@ -1536,8 +1638,18 @@ function highlightPalette() {
     if (on) node.scrollIntoView({ block: "nearest" });
   });
 }
-function openPalette() { els.palette.hidden = false; els.paletteInput.value = ""; palette.active = 0; renderPalette(); els.paletteInput.focus(); }
-function closePalette() { els.palette.hidden = true; }
+let paletteReturn = null;
+function openPalette() {
+  if (!els.palette.hidden || !els.intro.hidden) return;
+  paletteReturn = document.activeElement;
+  els.palette.hidden = false; els.app.inert = true;
+  els.paletteInput.value = ""; palette.active = 0; renderPalette(); els.paletteInput.focus();
+}
+function closePalette() {
+  if (els.palette.hidden) return;
+  els.palette.hidden = true; els.app.inert = false;
+  if (paletteReturn?.isConnected) paletteReturn.focus();
+}
 function runPalette(i) { const item = palette.items[i]; closePalette(); item?.run(); }
 
 // ── Intro ─────────────────────────────────────────────────────────────────────
@@ -1567,18 +1679,21 @@ function buildIntro() {
 function updateIntroFacts() {
   const readyPapers = state.papers.filter((paper) => { const e = entryForPaper(paper.name); return e && state.docs.get(e.document_id)?.status === "READY"; });
   const chunks = readyPapers.reduce((sum, paper) => sum + Number(state.docs.get(entryForPaper(paper.name).document_id).total_chunks || 0), 0);
+  // Counts appear only once every document's status has loaded, so a partial number never shows.
+  const loaded = state.hydrated;
   els.introFacts.replaceChildren(
-    h("li", {}, h("b", { text: readyPapers.length ? String(readyPapers.length) : "…" }), "papers indexed live"),
-    h("li", {}, h("b", { text: chunks ? String(chunks) : "…" }), "chunks with 256-d vectors"),
+    h("li", {}, h("b", { text: loaded ? String(readyPapers.length) : "…" }), readyPapers.length === 1 ? "paper indexed live" : "papers indexed live"),
+    h("li", {}, h("b", { text: loaded ? String(chunks) : "…" }), "chunks with 256-d vectors"),
     h("li", {}, h("b", { text: "16" }), "AWS components"),
     h("li", {}, h("b", { text: state.health?.region || "…" }), state.health?.ok ? "signed in" : "region"));
 }
 
-function showIntro() { closePalette(); buildIntro(); updateIntroFacts(); els.intro.classList.remove("is-leaving"); els.intro.hidden = false; els.introEnter.focus(); }
+function showIntro() { closePalette(); buildIntro(); updateIntroFacts(); els.intro.classList.remove("is-leaving"); els.intro.hidden = false; els.app.inert = true; els.introEnter.focus(); }
 function hideIntro() {
   if (els.intro.hidden) return;
   try { sessionStorage.setItem("folio.intro", "1"); } catch { /* ignore */ }
   els.intro.classList.add("is-leaving");
+  els.app.inert = false;
   els.app.classList.add("is-entering");
   setTimeout(() => { els.intro.hidden = true; els.intro.classList.remove("is-leaving"); layoutPages(); }, 560);
   setTimeout(() => els.app.classList.remove("is-entering"), 1400);
@@ -1620,7 +1735,8 @@ function wire() {
   els.paletteInput.addEventListener("keydown", (event) => {
     if (event.key === "ArrowDown") { event.preventDefault(); palette.active = Math.min(palette.items.length - 1, palette.active + 1); highlightPalette(); }
     else if (event.key === "ArrowUp") { event.preventDefault(); palette.active = Math.max(0, palette.active - 1); highlightPalette(); }
-    else if (event.key === "Enter") { event.preventDefault(); runPalette(palette.active); }
+    else if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); runPalette(palette.active); }
+    else if (event.key === "Tab") event.preventDefault(); // keep focus inside the palette
   });
   document.addEventListener("click", (event) => { if (!els.nodeCard.hidden && !els.nodeCard.contains(event.target)) closeNodeCard(); });
   els.pdfInput.addEventListener("change", () => uploadFile(els.pdfInput.files?.[0]));
@@ -1642,9 +1758,12 @@ function wire() {
   let resizeTimer = 0;
   new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(layoutPages, 120); }).observe(els.pages);
   document.addEventListener("keydown", (event) => {
+    if (!els.intro.hidden) {
+      if (event.key === "Enter" || event.key === " " || event.key === "Escape") { event.preventDefault(); hideIntro(); }
+      return; // nothing else (including ⌘K) acts behind the intro
+    }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); if (els.palette.hidden) openPalette(); else closePalette(); return; }
     if (event.key === "Escape") { if (!els.palette.hidden) closePalette(); closeNodeCard(); closeCitePop(); return; }
-    if (!els.intro.hidden) { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); hideIntro(); } return; }
     const typing = ["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName);
     if (typing || event.metaKey || event.ctrlKey || event.altKey || !els.palette.hidden) return;
     if (event.key === "/") { event.preventDefault(); els.question.focus(); }
@@ -1658,7 +1777,7 @@ async function initialize() {
   setTheme(store.get(KEYS.theme, "dark") === "light" ? "light" : "dark");
   buildTopology();
   wire();
-  setArchMode(store.get(KEYS.arch, "full"));
+  setArchMode(store.get(KEYS.arch, window.innerHeight < 820 ? "compact" : "full"));
   setConsole(store.get(KEYS.console, false) === true);
   renderTopology();
   setComposerEnabled(false);
@@ -1690,6 +1809,7 @@ async function initialize() {
   const saved = store.get(KEYS.current);
   if (state.library.some((entry) => entry.document_id === saved)) selectDocument(saved);
   await hydrateStatuses();
+  state.hydrated = true;
   updateIntroFacts();
   if (!state.current && !state.uploading) selectDocument(firstReady());
   renderReader();

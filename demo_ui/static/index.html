@@ -60,7 +60,7 @@
       <section class="topology" id="topology" data-mode="full" aria-labelledby="topology-title">
         <div class="topology-head">
           <h2 id="topology-title">Live architecture</h2>
-          <div class="narration" id="narration" aria-live="polite">
+          <div class="narration" id="narration">
             <span class="narration-dot" aria-hidden="true"></span>
             <p id="narration-text">Waiting for the first event from AWS…</p>
             <span class="narration-time" id="narration-time"></span>
@@ -160,7 +160,7 @@
             <h2 id="ask-title">Ask the paper</h2>
             <span class="panel-hint">Retrieval-augmented · Nova 2 Lite</span>
           </header>
-          <div class="thread" id="thread" aria-live="polite">
+          <div class="thread" id="thread">
             <div class="thread-empty" id="thread-empty">
               <p class="thread-empty-lede">Answers come only from this paper, and every claim points at its page.</p>
               <ol class="how">
@@ -206,6 +206,7 @@
       </div>
     </div>
     <div class="toasts" id="toasts" aria-live="polite"></div>
+    <p class="visually-hidden" id="sr-live" aria-live="polite"></p>
     <div class="cite-pop" id="cite-pop" role="tooltip" hidden></div>
   </body>
 </html>
