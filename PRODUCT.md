@@ -33,7 +33,7 @@ The backend is the `rag-pdf` AWS SAM stack in `us-east-1`. The browser demo runs
 ## Evidence on Hand
 
 - The deployed 15-page Transformer PDF smoke test reached `READY` with 38 chunks via pypdf, retrieved document-scoped passages, and returned a Nova 2 Lite answer with page-linked sources on 27 November 2026. See `ARCHITECTURE.md` for its precise scope.
-- The repository contains five research PDFs, a nine-slide evaluation presentation, local tests, and a repeatable command-line smoke test.
+- The repository contains five research PDFs, an eleven-slide evaluation presentation, local tests, and a repeatable command-line smoke test.
 - On 27 November 2026 all five bundled PDFs were indexed through the deployed stack (25 to 719 chunks), a browser question returned a cited answer in 7.3 s, and an off-topic question was declined for lack of evidence. See the README's verification table.
 - No benchmark of citation accuracy across all papers or verified Textract OCR result exists.
 

@@ -54,7 +54,7 @@ These runs show the pipeline works on real papers. They are not an accuracy benc
 
 ## Lab presentation
 
-[Five-minute evaluation guide](docs/EVALUATION_GUIDE.md) (demo script and likely viva questions) · [nine-slide PDF](presentation/UCS531_Lab_Evaluation.pdf) · [editable PowerPoint](presentation/UCS531_Lab_Evaluation.pptx).
+[Five-minute evaluation guide](docs/EVALUATION_GUIDE.md) (demo script and likely viva questions) · [eleven-slide PDF](presentation/UCS531_Lab_Evaluation.pdf) · [editable PowerPoint](presentation/UCS531_Lab_Evaluation.pptx).
 
 ## Full flow
 
