@@ -1,123 +1,172 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#071923" />
-    <meta name="description" content="A live, page-cited PDF question answering demo on AWS." />
-    <title>PDF Q&A · UCS531 live demo</title>
+    <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="Folio: ask a research paper, watch a live serverless AWS pipeline answer with page citations." />
+    <title>Folio · Serverless paper Q&amp;A on AWS</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23ff9f43'/%3E%3Cpath d='M10 8h9l4 4v12H10z' fill='%230a0b0d'/%3E%3Ccircle cx='21' cy='21' r='3' fill='%23ff9f43'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/static/style.css" />
     <script src="/static/app.js" defer></script>
   </head>
   <body>
-    <header class="site-header">
-      <div class="header-inner">
-        <a class="brand" href="/" aria-label="PDF Q&A demo home">
-          <span class="brand-mark" aria-hidden="true">P<span>·</span></span>
-          <span class="brand-copy"><strong>PDF Q&A</strong><small>UCS531 / CLOUD COMPUTING</small></span>
+    <div class="app" id="app">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Folio home">
+          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+            <rect width="32" height="32" rx="8" class="brand-tile" />
+            <path d="M10 8h9l4 4v12H10z" class="brand-page" />
+            <path d="M19 8v4h4" class="brand-fold" />
+            <circle cx="21" cy="21" r="3" class="brand-spark" />
+          </svg>
+          <span class="brand-copy"><strong>Folio</strong><small>Serverless paper Q&amp;A · UCS531 Cloud Computing</small></span>
         </a>
-        <div class="connection" id="connection" role="status" aria-live="polite">
-          <span class="connection-dot" aria-hidden="true"></span>
-          <span id="connection-text">Checking AWS connection</span>
+        <div class="topbar-meta">
+          <span class="meta"><span class="meta-key">Region</span><span class="meta-value" id="meta-region">—</span></span>
+          <span class="meta meta-api"><span class="meta-key">API</span><span class="meta-value" id="meta-api">—</span></span>
+          <span class="live-pill" id="live-pill" role="status" aria-live="polite"><i aria-hidden="true"></i><span id="live-text">Connecting to AWS</span></span>
+          <button class="icon-button" id="topology-toggle" type="button" aria-pressed="true" title="Show or hide the architecture (A)">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="4" cy="10" r="2" /><circle cx="16" cy="5" r="2" /><circle cx="16" cy="15" r="2" /><path d="M6 10l8-5M6 10l8 5" /></svg>
+            <span class="visually-hidden">Toggle architecture</span>
+          </button>
+          <button class="icon-button" id="console-toggle" type="button" aria-pressed="false" title="Event stream (`)">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="2" /><path d="M6 8l2.5 2L6 12M10.5 12.5h3.5" /></svg>
+            <span class="visually-hidden">Toggle event stream</span>
+          </button>
+          <button class="icon-button" id="theme-toggle" type="button" title="Light or dark theme (T)">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="4" /><path d="M10 1.5v2M10 16.5v2M1.5 10h2M16.5 10h2M4 4l1.4 1.4M14.6 14.6L16 16M4 16l1.4-1.4M14.6 5.4L16 4" /></svg>
+            <span class="visually-hidden">Toggle theme</span>
+          </button>
         </div>
-      </div>
-    </header>
+      </header>
 
-    <main class="shell">
-      <section class="intro" aria-labelledby="page-title">
-        <div>
-          <h1 id="page-title">Ask a paper.<br /><span>See the evidence.</span></h1>
-          <p>Upload a research PDF, watch the cloud index its pages, then ask a question. Every answer comes back with the passages it used.</p>
+      <section class="topology" id="topology" aria-labelledby="topology-title">
+        <div class="topology-head">
+          <h2 id="topology-title">Live architecture</h2>
+          <p id="topology-caption">Every node reflects real state from the deployed stack. Select a service to see its role.</p>
+          <ul class="legend" aria-label="Service categories">
+            <li data-kind="client">Client</li>
+            <li data-kind="network">Networking</li>
+            <li data-kind="compute">Compute</li>
+            <li data-kind="storage">Storage</li>
+            <li data-kind="database">Database</li>
+            <li data-kind="integration">Messaging</li>
+            <li data-kind="ai">AI / ML</li>
+          </ul>
         </div>
-        <div class="intro-fact" aria-label="Project information">
-          <span class="fact-rule" aria-hidden="true"></span>
-          <strong>LIVE AWS PIPELINE</strong>
-          <span>Six Lambda functions. One paper to a page-cited answer.</span>
+        <div class="topology-canvas">
+          <svg id="topology-svg" viewBox="0 0 1440 226" role="group" aria-label="Live diagram of the ingest and ask paths through AWS services"></svg>
+        </div>
+        <div class="node-card" id="node-card" role="dialog" aria-modal="false" aria-labelledby="node-card-title" hidden>
+            <button class="node-card-close" id="node-card-close" type="button" aria-label="Close service details">×</button>
+            <p class="node-card-kind" id="node-card-kind"></p>
+            <h3 id="node-card-title"></h3>
+            <p id="node-card-body"></p>
+            <dl id="node-card-facts"></dl>
+            <p class="node-card-live" id="node-card-live"></p>
         </div>
       </section>
 
-      <section class="pipeline" aria-label="Processing pipeline">
-        <div class="section-caption"><h2>What happens when you press Run</h2><span>Deployed services, visible state</span></div>
-        <ol id="pipeline-stages" class="stage-list">
-          <li class="stage is-current" data-stage="upload"><span class="stage-number">01</span><span class="stage-copy"><strong>Upload</strong><small>Private S3</small></span></li>
-          <li class="stage" data-stage="extract"><span class="stage-number">02</span><span class="stage-copy"><strong>Extract</strong><small>Textract / text layer</small></span></li>
-          <li class="stage" data-stage="index"><span class="stage-number">03</span><span class="stage-copy"><strong>Index</strong><small>DynamoDB + Titan</small></span></li>
-          <li class="stage" data-stage="retrieve"><span class="stage-number">04</span><span class="stage-copy"><strong>Retrieve</strong><small>Cosine similarity</small></span></li>
-          <li class="stage" data-stage="answer"><span class="stage-number">05</span><span class="stage-copy"><strong>Answer</strong><small>SQS + Nova 2 Lite</small></span></li>
-        </ol>
-      </section>
-
-      <div class="workspace">
-        <div class="paper-column">
-          <section class="panel upload-panel" aria-labelledby="paper-heading">
-            <div class="panel-heading"><h2 id="paper-heading">Choose a paper</h2></div>
-            <p class="panel-description">Start with the included Transformer paper, or upload your own text-based PDF.</p>
-            <button class="sample-button" id="sample-button" type="button">
-              <span><strong>Run with sample paper</strong><small>Attention Is All You Need · 15 pages</small></span>
-              <span class="button-arrow" aria-hidden="true">↗</span>
-            </button>
-            <details class="existing-document">
-              <summary>Already indexed a paper? Open its document ID</summary>
-              <form id="resume-form" class="resume-form">
-                <label for="existing-id">Document ID</label>
-                <div><input id="existing-id" type="text" inputmode="text" maxlength="32" placeholder="32-character document ID" autocomplete="off" spellcheck="false" /><button type="submit">Open paper</button></div>
-                <label class="sample-check"><input id="existing-sample" type="checkbox" /> This ID used the included sample paper</label>
-              </form>
-            </details>
-            <div class="or-line"><span>OR USE YOUR PDF</span></div>
-            <form id="upload-form" novalidate>
-              <div class="drop-zone" id="drop-zone">
-                <input id="pdf-input" name="file" type="file" accept=".pdf,application/pdf" aria-describedby="upload-note" />
-                <label for="pdf-input"><strong id="drop-title">Choose a PDF or drop it here</strong><span id="drop-subtitle">The file stays private in your AWS account.</span></label>
-              </div>
-              <p class="field-note" id="upload-note">This account's fallback reads existing text only. Use a text-based PDF under 10 MB; scanned pages need Textract OCR access.</p>
-              <button class="button button-quiet upload-submit" id="upload-button" type="submit" disabled>Index selected PDF <span aria-hidden="true">→</span></button>
+      <main class="workspace">
+        <aside class="panel library" aria-labelledby="library-title">
+          <header class="panel-head">
+            <h2 id="library-title">Library</h2>
+            <span class="panel-hint" id="library-hint">Bundled papers</span>
+          </header>
+          <ul class="paper-list" id="paper-list" aria-label="Papers"></ul>
+          <div class="library-section-title" id="uploads-title" hidden>Your uploads</div>
+          <ul class="paper-list" id="upload-list" aria-label="Uploaded papers" hidden></ul>
+          <form class="dropzone" id="dropzone" novalidate>
+            <input id="pdf-input" type="file" accept=".pdf,application/pdf" />
+            <label for="pdf-input">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 15v4a1 1 0 001 1h14a1 1 0 001-1v-4" /></svg>
+              <strong id="drop-title">Upload a PDF</strong>
+              <span id="drop-subtitle">Drop a text-based paper · max 10 MB</span>
+            </label>
+          </form>
+          <p class="inline-alert" id="library-error" role="alert" hidden></p>
+          <details class="open-by-id">
+            <summary>Open an indexed document by ID</summary>
+            <form id="open-form">
+              <label class="visually-hidden" for="open-id">Document ID</label>
+              <input id="open-id" type="text" maxlength="32" placeholder="32-character document ID" autocomplete="off" spellcheck="false" />
+              <button type="submit">Open</button>
             </form>
-            <p id="upload-error" class="inline-alert" role="alert" hidden></p>
-          </section>
+          </details>
+        </aside>
 
-          <section class="panel document-panel" aria-labelledby="document-heading">
-            <div class="panel-heading"><h2 id="document-heading">Document status</h2><span class="state-chip" id="document-chip">Waiting</span></div>
-            <div id="document-empty" class="document-empty"><span class="empty-line" aria-hidden="true"></span><p>Your paper's progress will appear here after upload.</p></div>
-            <div id="document-detail" hidden>
-              <div class="document-name-row"><strong id="document-name"></strong><span id="document-filetype">PDF</span></div>
-              <div class="progress-track" aria-label="Indexing progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="progress-fill"></span></div>
-              <div class="progress-row"><span id="document-message">Waiting for upload</span><strong id="document-count">0 / 0 chunks</strong></div>
-              <dl class="document-meta"><div><dt>Text extraction</dt><dd id="document-method">Pending</dd></div><div><dt>Document ID</dt><dd id="document-id">Pending</dd></div></dl>
+        <section class="panel reader" aria-labelledby="reader-title">
+          <header class="reader-head">
+            <div class="reader-title-wrap">
+              <h2 id="reader-title">No paper selected</h2>
+              <p class="reader-sub" id="reader-sub">Choose a bundled paper or upload one to begin.</p>
             </div>
-            <p id="document-error" class="inline-alert" role="alert" hidden></p>
-          </section>
-        </div>
+            <div class="reader-actions">
+              <button class="ghost-button" id="reindex" type="button" title="Upload this bundled paper again as a new document and watch every AWS stage live" hidden>
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10a6 6 0 11-1.8-4.3M16 3.5v3.2h-3.2" /></svg>Re-index live
+              </button>
+              <span class="chip" id="doc-chip">Idle</span>
+            </div>
+          </header>
+          <div class="ingest" id="ingest" hidden>
+            <div class="ingest-track" role="progressbar" aria-label="Indexing progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="ingest-fill"></span></div>
+            <dl class="ingest-stats">
+              <div><dt>Chunks</dt><dd id="stat-chunks">—</dd></div>
+              <div><dt>Extraction</dt><dd id="stat-method">—</dd></div>
+              <div><dt>Upload</dt><dd id="stat-upload">—</dd></div>
+              <div><dt>Indexed in</dt><dd id="stat-indexed">—</dd></div>
+              <div class="stat-id"><dt>Document</dt><dd><button type="button" class="copy-id" id="stat-id" title="Copy document ID">—</button></dd></div>
+            </dl>
+            <p class="inline-alert" id="doc-error" role="alert" hidden></p>
+          </div>
+          <div class="reader-frame" id="reader-frame">
+            <iframe id="pdf-frame" title="PDF reader" hidden></iframe>
+            <div class="reader-empty" id="reader-empty">
+              <div class="sheet" aria-hidden="true"><span></span><span></span><span></span><span class="short"></span></div>
+              <p id="reader-empty-text">The paper opens here. Citations in an answer jump straight to their page.</p>
+            </div>
+          </div>
+        </section>
 
-        <div class="answer-column">
-          <section class="panel ask-panel" aria-labelledby="ask-heading">
-            <div class="panel-heading"><h2 id="ask-heading">Ask the paper</h2></div>
-            <form id="question-form">
-              <label class="question-label" for="question-input">Your question</label>
-              <textarea id="question-input" rows="3" maxlength="2000" placeholder="What is the role of self-attention in the Transformer?" disabled></textarea>
-              <div class="question-helper"><span id="question-hint">Choose a paper first to unlock questions.</span><span id="question-length">0 / 2000</span></div>
-              <div class="suggestions"><span>TRY A QUESTION</span><button class="suggestion" type="button" data-question="How does the Transformer use self-attention in the encoder and decoder?" disabled>How does self-attention work?</button><button class="suggestion" type="button" data-question="Why does the Transformer use multi-head attention?" disabled>Why multi-head attention?</button></div>
-              <button class="button button-primary ask-submit" id="ask-button" type="submit" disabled>Find answer <span aria-hidden="true">→</span></button>
-            </form>
-            <p id="answer-error" class="inline-alert" role="alert" hidden></p>
-          </section>
+        <section class="panel ask" aria-labelledby="ask-title">
+          <header class="panel-head">
+            <h2 id="ask-title">Ask the paper</h2>
+            <span class="panel-hint">Retrieval-augmented · Nova 2 Lite</span>
+          </header>
+          <div class="thread" id="thread" aria-live="polite">
+            <div class="thread-empty" id="thread-empty">
+              <p class="thread-empty-lede">Answers come only from this paper, with every claim tied to a page.</p>
+              <ol class="how">
+                <li><span>1</span>Titan turns your question into a 256-dimension vector.</li>
+                <li><span>2</span>Cosine similarity ranks every indexed chunk.</li>
+                <li><span>3</span>SQS hands the top passages to a worker that calls Nova.</li>
+              </ol>
+            </div>
+          </div>
+          <form class="composer" id="composer">
+            <div class="suggestions" id="suggestions" aria-label="Suggested questions"></div>
+            <div class="composer-box">
+              <label class="visually-hidden" for="question">Your question</label>
+              <textarea id="question" rows="2" maxlength="2000" placeholder="Select a ready paper to ask a question" disabled></textarea>
+              <button class="send" id="send" type="submit" disabled aria-label="Ask">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M10.5 5.5L15 10l-4.5 4.5" /></svg>
+              </button>
+            </div>
+            <div class="composer-foot"><span id="composer-hint">Enter to ask · Shift+Enter for a new line</span><span id="question-count">0 / 2000</span></div>
+          </form>
+        </section>
+      </main>
 
-          <section class="panel answer-panel" aria-labelledby="answer-heading" aria-live="polite">
-            <div class="panel-heading"><h2 id="answer-heading">Grounded answer</h2><span class="state-chip" id="answer-chip">Not started</span></div>
-            <div class="answer-empty" id="answer-empty"><span class="answer-placeholder" aria-hidden="true">“</span><p>Ask a question to see Nova's answer, checked against the paper's retrieved passages.</p></div>
-            <div id="answer-loading" class="answer-loading" hidden><p id="answer-loading-label">Finding relevant passages…</p><div class="skeleton-line"></div><div class="skeleton-line short"></div><div class="skeleton-line medium"></div></div>
-            <div id="answer-result" hidden><div class="answer-text" id="answer-text"></div><div class="answer-footer"><span id="answer-model">Amazon Nova 2 Lite</span><button type="button" class="text-button" id="copy-answer">Copy answer</button></div></div>
-          </section>
-
-          <section class="panel sources-panel" aria-labelledby="sources-heading">
-            <div class="panel-heading"><h2 id="sources-heading">Source pages <span id="source-count" class="count-badge">0</span></h2></div>
-            <p id="sources-empty" class="sources-empty">Page references and original passages will appear with the answer.</p>
-            <div id="sources-list" class="sources-list" hidden></div>
-          </section>
-        </div>
-      </div>
-
-      <footer class="site-footer"><p>PDF Q&A is a lab demonstration of a deployed serverless RAG pipeline. Answers are model-generated; inspect their cited passages.</p><p>Current AWS account: text-layer fallback available. Scanned-page OCR remains unverified.</p></footer>
-    </main>
+      <section class="console" id="console" aria-labelledby="console-title">
+        <button class="console-bar" id="console-bar" type="button" aria-expanded="false" aria-controls="console-log">
+          <span class="console-title" id="console-title"><i aria-hidden="true"></i>Event stream</span>
+          <span class="console-last" id="console-last">Waiting for the first request</span>
+          <span class="console-count" id="console-count">0 events</span>
+        </button>
+        <ol class="console-log" id="console-log" hidden></ol>
+      </section>
+    </div>
+    <div class="cite-pop" id="cite-pop" role="tooltip" hidden></div>
   </body>
 </html>

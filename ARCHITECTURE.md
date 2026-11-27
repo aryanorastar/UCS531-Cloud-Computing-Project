@@ -30,6 +30,8 @@ The UI shows processing states and progress before asking a question, then polls
 
 On 27 November 2026, the Mac browser at `localhost:8080` used the temporary `ucs531-demo` AWS CLI profile against the deployed `us-east-1` API. The sample button uploaded the Transformer PDF as document `90cedb25809042298d83b23f8eb9711e`; the UI showed 37/38 indexed chunks and then `READY` at 38/38 with `extraction_method: pypdf`. A preset question completed with a Nova 2 Lite answer and five source cards. The S4 card expanded to show its page 5 excerpt. This verifies the browser → local signed client → deployed text-PDF path for one sample. The generated PDF page-link target was present, but new-tab navigation was not independently verified. Browser failure displays and other PDFs need separate checks.
 
+Later that day the browser demo was redesigned as Folio (see `DESIGN.md`). The same server also lists the bundled papers, keeps a local list of indexed documents in the ignored `.demo/` folder, and serves bundled or locally cached PDFs to an embedded reader; the AWS-facing calls are unchanged. Against the same stack, all five bundled papers reached `READY` (25 to 719 chunks, the 144-page survey in 283 s), a live re-index of the 9-page GAN paper took 10–13 s from upload to `READY`, a question returned a Nova answer citing pages 3 and 5 in 7.3 s, and an off-topic question was declined for lack of evidence.
+
 ## Ingestion pipeline
 
 ```mermaid
@@ -123,4 +125,4 @@ Logs are retained for 14 days. Failure queues have CloudWatch alarms; alarm noti
 
 ## Next acceptance gate
 
-The live text-PDF cloud path and one browser demo flow are verified for the Transformer sample. Next, check the browser's failure display and PDF new-tab navigation, then evaluate answer and citation quality across the included papers, including unanswerable questions, and measure latency and cost. Textract OCR requires separate account access and an actual scanned-PDF test; the Free-plan `SubscriptionRequiredException` does not prove OCR works. Recovery/deletion, a possible indexed vector store, and a production multi-user web application remain follow-up work.
+The live text-PDF cloud path and one browser demo flow are verified for the Transformer sample. Next, check the browser's failure display, then evaluate answer and citation quality across the included papers, including unanswerable questions, and measure latency and cost. Textract OCR requires separate account access and an actual scanned-PDF test; the Free-plan `SubscriptionRequiredException` does not prove OCR works. Recovery/deletion, a possible indexed vector store, and a production multi-user web application remain follow-up work.

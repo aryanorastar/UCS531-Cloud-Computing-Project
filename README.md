@@ -1,38 +1,60 @@
-# Serverless PDF Q&A on AWS
+# Folio: serverless PDF Q&A on AWS
 
-Private repository: [aryanorastar/UCS531-Cloud-Computing-Project](https://github.com/aryanorastar/UCS531-Cloud-Computing-Project).
+Upload a research paper, watch AWS index it, then ask questions. Answers are generated only from retrieved passages of that paper, and every claim carries a page citation you can click.
 
-Upload a PDF, wait for text extraction and indexing, and ask questions answered from retrieved passages. The backend uses S3, Textract when available, a bounded text-PDF fallback when it is not, DynamoDB, Bedrock Titan embeddings, and Bedrock Amazon Nova 2 Lite answers.
+![Folio answering a question about the Transformer paper. The live architecture is lit green, the answer shows its timings and citations, and the reader is open on the cited page 5.](docs/assets/folio-answer.jpg)
 
-## Current status
+**AWS services:** API Gateway (IAM auth) · six Lambda functions · S3 · Textract with a pypdf fallback · DynamoDB + Streams · SQS · Bedrock (Titan Text Embeddings V2, Nova 2 Lite) · CloudWatch · all declared in one AWS SAM template. Private repository: [aryanorastar/UCS531-Cloud-Computing-Project](https://github.com/aryanorastar/UCS531-Cloud-Computing-Project). Course: UCS531 Cloud Computing.
 
-All six Lambda handlers, the shared client, an AWS SAM deployment, integration tests, and GitHub Actions workflows are implemented. Local tests simulate AWS storage and events and stub Textract/Bedrock responses; they do not validate a live model. The SAM template validates and packages for Python 3.12. A separate local demonstration parses text from an actual sample PDF and exercises the handlers with simulated AWS services and deterministic model substitutes.
-
-**The live text-PDF path passed.** On 27 November 2026, the deployed `rag-pdf` stack in `us-east-1` passed the full sample-PDF upload-to-answer smoke test from AWS CloudShell at code commit `a39914e`. A fresh Transformer PDF reached `READY` with **38 chunks** using `extraction_method: pypdf`; document-scoped retrieval passed; Nova 2 Lite returned a nonempty answer with source pages from that PDF. The run exercised the deployed API, S3, Lambda roles, DynamoDB/Streams, Titan, SQS, and Nova answer polling. Earlier, Textract `StartDocumentTextDetection` returned `SubscriptionRequiredException` under this account's Free plan, so **Textract OCR remains blocked and unverified**; no billing-plan change was made. The fallback reads an existing text layer and cannot OCR scanned PDFs. A temporary local AWS login profile is now configured for the browser demo; a least-privilege deployment role is not. The repository remains private. See [ARCHITECTURE.md](ARCHITECTURE.md) and [ROADMAP.md](ROADMAP.md) for evidence and remaining work.
-
-## Lab presentation
-
-Use the [nine-slide PDF](presentation/UCS531_Lab_Evaluation.pdf) for a reliable preview or the [editable PowerPoint](presentation/UCS531_Lab_Evaluation.pptx) to present. The [five-minute evaluation guide](docs/EVALUATION_GUIDE.md) supplies the speaking order, demo commands, likely examiner questions, and the exact boundary of the live verification.
-
-## Browser demo
-
-`demo_ui/` adds a browser presentation layer over the existing AWS pipeline. An operator starts its Python server with AWS credentials and the deployed `RAG_API_BASE_URL`; the page then uploads a PDF, shows extraction/indexing status, asks a question, and displays the answer with source page numbers and excerpts. The browser calls the local server, which uses `RagClient` to sign requests to the IAM-protected API. AWS credentials are not embedded in JavaScript. This is an operator-controlled demo, with no separate public login or multi-user isolation. See [run instructions](docs/DEPLOYMENT.md) and the [five-minute UI walkthrough](docs/EVALUATION_GUIDE.md).
-
-**The live browser path passed on 27 November 2026.** From `localhost:8080` on the evaluation Mac using the temporary `ucs531-demo` AWS login profile, the sample button uploaded the Transformer PDF as document `90cedb25809042298d83b23f8eb9711e`. The UI displayed indexing at 37/38, then `READY` at 38/38 via `pypdf`. A preset question completed through Nova 2 Lite and displayed five source cards; source S4's page 5 excerpt was expanded. After the UI race fix, a second sample upload initially showed a transient AWS request error. Retrying in the same page produced document `8334410045ae4b8e945c37f0bcd49988`, again `READY` at 38/38, and another cited answer. These are live browser-to-AWS runs, not a quality benchmark. A PDF page link was rendered but opening its new tab was not independently verified.
-
-![Live browser demo showing an indexed paper and cited answer](docs/assets/browser-demo.jpg)
-
-[See the expanded page 5 source excerpt](docs/assets/source-pages.jpg).
-
-From the repository root on the evaluation Mac, with the Python environment from [Quick start](#quick-start):
+## Run the demo
 
 ```sh
 aws login --profile ucs531-demo --region us-east-1
-RAG_API_BASE_URL=https://p6i206cbk1.execute-api.us-east-1.amazonaws.com/dev \
-  .venv/bin/python -m demo_ui.server --profile ucs531-demo
+.venv/bin/python -m demo_ui.server --profile ucs531-demo \
+  --api-url https://p6i206cbk1.execute-api.us-east-1.amazonaws.com/dev
 ```
 
-Open `http://127.0.0.1:8080`. The sample-paper button provides the fastest walkthrough. This command calls the existing live stack and can use billable AWS services; the local UI server stops with Ctrl+C.
+Open <http://127.0.0.1:8080>. Set up `.venv` first with [Quick start](#quick-start). The server calls the live stack, so indexing and answers use (cheap) billable AWS services. Stop it with Ctrl+C.
+
+## What the interface shows
+
+| Area | What it does | Data source |
+| --- | --- | --- |
+| **Live architecture** | Sixteen service nodes on the ingest and ask paths light up, animate and show live numbers (chunks embedded, retrieval time, generation time). Select a node to see its role and configuration. | Document and answer-job states polled from the API; configuration from `template.yaml` |
+| **Library** | The five bundled papers with one-click indexing, your own PDF uploads, and reopening any document ID | Local list in `.demo/library.json` plus live status per document |
+| **Reader** | The PDF itself. Clicking a citation jumps to its page. | Bundled PDF, or a local copy of your upload |
+| **Ask thread** | Retrieve → Queue → Generate → Cite timeline with measured timings, an answer with clickable `[S1]` chips, and a hover preview of each passage | `/query` (top 10 with cosine scores) and the `/answer` job |
+| **Where the evidence is** | A heat strip across every page showing how close each page's best chunk is to the question. Dots mark pages the answer actually cites; retrieved but uncited passages are dimmed. | `similarity_score` from retrieval |
+| **Event stream** | A CloudWatch-style log of every call and state transition with its latency | Measured in the browser |
+| **Re-index live** | Uploads a bundled paper again as a new document so the whole ingest path can be watched (the 9-page GAN paper takes about 10–15 s) | Real upload |
+| **Off-topic test** | Asks a question the paper cannot answer. A grounded system declines. | Real answer |
+
+Keys: `/` ask · `` ` `` event stream · `A` architecture · `T` light or dark theme.
+
+| Service card (SQS) | Evidence view, light theme |
+| --- | --- |
+| ![Clicking the Amazon SQS node opens a card with its role, visibility timeout, dead-letter queue and alarm.](docs/assets/folio-service-card.jpg) | ![Light theme: the evidence strip over 15 pages and five source cards, three dimmed as retrieved but not cited.](docs/assets/folio-light-evidence.jpg) |
+
+![Live ingest of the GAN paper: DynamoDB, the embedding Lambda and Titan are active at 9/25 chunks while the event stream logs each state change.](docs/assets/folio-live-ingest.jpg)
+
+The browser never receives AWS credentials. The page talks to a localhost-only Python server, which signs every request with SigV4 through `RagClient`. It accepts writes only from its own origin and refuses to bind to anything except localhost. It is an operator demo, not a public multi-user site.
+
+## Verified live (27 November 2026, `us-east-1`)
+
+| Check | Result |
+| --- | --- |
+| All five bundled papers indexed by the deployed stack | Transformer 38 chunks in 17 s · BERT 54 in 30 s · ResNet 52 in 19 s · GAN 25 in 18 s (live re-index: 10–13 s) · LLM Survey, 144 pages → 719 chunks in 283 s. All used the pypdf text layer. |
+| Question → cited answer in the browser | "How does self-attention work in the encoder and decoder?" answered in 7.3 s, citing pages 3 and 5 of the Transformer paper |
+| Grounding check | "Who won the 2022 FIFA World Cup?" asked of the GAN paper returned "the documents do not provide enough evidence" in 3.2 s |
+| Command-line smoke test | `scripts/smoke_test.py` passed upload → `READY` → retrieval → Nova answer from AWS CloudShell at commit `a39914e` |
+| Textract OCR | **Blocked.** `StartDocumentTextDetection` returns `SubscriptionRequiredException` on this account's Free plan, so scanned (image-only) PDFs cannot be read. No billing change was made. |
+| Local tests | 46 pass, with S3/DynamoDB/SQS simulated by moto and Bedrock/Textract responses stubbed |
+
+These runs show the pipeline works on real papers. They are not an accuracy benchmark; measuring citation correctness across many questions is future work. Details: [ARCHITECTURE.md](ARCHITECTURE.md), [ROADMAP.md](ROADMAP.md).
+
+## Lab presentation
+
+[Five-minute evaluation guide](docs/EVALUATION_GUIDE.md) (demo script and likely viva questions) · [eleven-slide PDF](presentation/UCS531_Lab_Evaluation.pdf) · [editable PowerPoint](presentation/UCS531_Lab_Evaluation.pptx).
 
 ## Full flow
 
@@ -94,7 +116,7 @@ print(result["sources"])
 | `lambda_functions/` | Six handlers, shared contracts/retrieval code, and packaged dependencies |
 | `template.yaml` | Complete SAM application infrastructure and scoped execution policies |
 | `client.py` | IAM signing, streamed uploads, readiness checks, and answer polling |
-| `demo_ui/` | Operator-run browser interface and local proxy through the existing signed client |
+| `demo_ui/` | Folio: operator-run browser interface (live architecture, library, PDF reader, cited Q&A) and its localhost signing proxy |
 | `scripts/deploy.py` | Credential/model preflight, build/deploy, stack outputs, optional live smoke test |
 | `scripts/smoke_test.py` | Real upload-to-answer verification against a deployed API |
 | `scripts/local_demo.py` | Offline, step-by-step handler demonstration using actual PDF text and simulated services |
@@ -107,6 +129,6 @@ print(result["sources"])
 
 ## Baseline limits
 
-The default limits are 25 MiB per PDF, 500 Textract pages, 2,000 chunks per document, and 2,500 chunks per search. The pypdf fallback is narrower: 10 MiB, 200 pages, and 1 million extracted characters; encrypted or image-only PDFs cannot use it. `GET /documents/{id}` reports `extraction_method` as `textract` or `pypdf` when selected. Retrieval is an exact document-partition query, not an indexed vector database. Ownership is per IAM user or role; sessions of the same role share that scope. The browser demo inherits its server's IAM identity; stronger multi-user login, a production-hosted interface, document deletion, and measured answer-quality evaluation remain future work.
+The default limits are 25 MiB per PDF, 500 Textract pages, 2,000 chunks per document, and 2,500 chunks per search. The pypdf fallback is narrower: 10 MiB, 200 pages, and 1 million extracted characters; encrypted or image-only PDFs cannot use it. `GET /documents/{id}` reports `extraction_method` as `textract` or `pypdf` when selected. Retrieval is an exact document-partition query, not an indexed vector database. Ownership is per IAM user or role; sessions of the same role share that scope. The browser demo inherits its server's IAM identity and reads PDFs at most 10 MiB (the fallback's limit); stronger multi-user login, a production-hosted interface, document deletion, and measured answer-quality evaluation remain future work.
 
 [Lab evaluation guide](docs/EVALUATION_GUIDE.md) · [Upload API](docs/2-Upload_Endpoint.md) · [Ingestion](docs/3-Data_Ingestion.md) · [Query and answer APIs](docs/4-RAG_Query_API.md) · [Notebook usage](docs/5-Testing_Scripts.md) · [Sample questions](docs/Sample_Questions.md)

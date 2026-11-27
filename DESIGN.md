@@ -1,92 +1,80 @@
 ---
-name: UCS531 PDF Q&A
-description: An operator-facing lab interface for a live, page-cited AWS PDF question answering pipeline.
+name: Folio
+description: An operator console that makes a live serverless RAG pipeline on AWS visible, and keeps every answer next to the page it came from.
 colors:
-  canvas: "#071923"
-  surface: "#0d2630"
-  surface-strong: "#12313b"
-  surface-hover: "#19404a"
-  border: "#31505a"
-  border-soft: "#26444e"
-  text: "#f2f6f4"
-  muted: "#acc2c6"
-  quiet: "#8faab0"
-  mint: "#8fe3d0"
-  mint-deep: "#173b39"
-  error: "#ffc0b4"
-  error-background: "#452c2c"
+  ink: "#08090b"
+  panel: "#0f1114"
+  panel-2: "#14171b"
+  line: "#20242a"
+  text: "#ede9e2"
+  muted: "#9ba1a9"
+  signal: "#ff9f43"
+  ready: "#5fe3a6"
+  danger: "#ff7166"
+  paper: "#f3f0e9"
+  paper-signal: "#d36a07"
+service-kinds:
+  client: "#c7ccd3"
+  network: "#b48cff"
+  compute: "#ff9f43"
+  storage: "#5fe3a6"
+  database: "#7d9bff"
+  integration: "#ff6fae"
+  ai: "#34e0d0"
 typography:
-  display:
-    fontFamily: "Avenir Next, Segoe UI, system-ui, sans-serif"
-    fontSize: "clamp(2.65rem, 4.2vw, 4.7rem)"
-    fontWeight: 760
-    lineHeight: 1.06
-    letterSpacing: "-.047em"
-  body:
-    fontFamily: "Avenir Next, Segoe UI, system-ui, sans-serif"
-    fontSize: "1rem"
-    lineHeight: 1.5
-  label:
-    fontFamily: "Avenir Next, Segoe UI, system-ui, sans-serif"
-    fontSize: ".75rem"
-    fontWeight: 700
+  display: "ui-serif (New York), Iowan Old Style, Charter, Georgia"
+  interface: "ui-sans-serif (SF Pro), Segoe UI, system-ui"
+  telemetry: "ui-monospace (SF Mono), JetBrains Mono, Menlo"
 rounded:
-  panel: "16px"
-  control: "11px"
-components:
-  panel:
-    backgroundColor: "{colors.surface}"
-    textColor: "{colors.text}"
-    rounded: "{rounded.panel}"
-    padding: "26px"
-  button-primary:
-    backgroundColor: "{colors.mint}"
-    textColor: "{colors.canvas}"
-    rounded: "{rounded.control}"
-    padding: "10px 16px"
-  button-sample:
-    backgroundColor: "{colors.mint-deep}"
-    textColor: "{colors.text}"
-    rounded: "{rounded.control}"
-    padding: "15px 18px"
+  panel: "14px"
+  control: "9px"
 ---
 
-# Design System: UCS531 PDF Q&A
+# Design system: Folio
 
-## Overview
+## North star: "Mission control for one paper"
 
-**Creative North Star: "The Visible Pipeline"**
+A cloud pipeline is normally invisible: a request goes in, an answer comes out. Folio's job in a lab evaluation is to make the middle visible without inventing anything. Every lit node, counter and timing on screen comes from a real API state or a real measurement.
 
-The interface should let an evaluator understand what is happening in AWS while Aryan operates the demo. Its dark navy canvas and mint signals extend the existing presentation deck. The layout is compact enough to keep the paper, job state, question, answer, and sources in one view without making asynchronous work look instantaneous.
+Three registers carry that idea:
 
-## Colors
+- **Editorial serif** for things a person reads: paper titles, the answer, source passages. Answers read like a page of the paper, not a chat bubble.
+- **Interface sans** for controls and labels.
+- **Telemetry mono** for anything a machine reports: chunk counts, latencies, IDs, the event stream.
 
-Mint marks actions, current pipeline stages, ready states, links, and source references. Navy tonal layers distinguish the canvas, panels, and controls. A warm error pair is reserved for failed or unavailable states. The frontmatter values reflect the actual CSS custom properties in `demo_ui/static/style.css`.
+## Color
 
-## Typography
+Ink-dark by default (better contrast for a demo at night or on a dim projector), paper-light on `T`. One warm **signal** color means "work is happening right now": active nodes, marching edges, travelling packets, the progress bar, citation chips. **Ready** green means finished, **danger** coral means failed or gated. Nothing else competes for attention.
 
-The display headline uses a large, tightly tracked system font stack. Body copy stays at normal tracking; wide tracking is reserved for brief uppercase metadata labels. Source excerpts and answer text use comfortable line spacing for reading during a presentation.
+Service nodes carry a thin stripe in their category color (compute, storage, database, messaging, AI, networking, client) so the architecture can be read at a glance. These categories echo the convention cloud diagrams use, without copying any vendor artwork.
 
 ## Layout
 
-At desktop widths the paper and document status occupy the left column, while question, answer, and source pages occupy the right. The five-stage pipeline spans both columns. Below 950px the work area stacks; below 760px the stages wrap into two columns so all five remain visible without horizontal scrolling.
+```
+┌ topbar ─ brand · region · API · live pill · toggles ─────────────────────┐
+├ live architecture: two lanes (Ingest, Ask), 16 nodes, presigned-PUT arc ─┤
+├ library ─┬─ reader (PDF, ingest stats) ──────────┬─ ask thread + composer ┤
+└ event stream (collapsible) ──────────────────────────────────────────────┘
+```
 
-## Elevation & Depth
+The page is an app shell: it fills the viewport and panels scroll inside themselves, so the architecture, the paper and the answer are visible together. Below 1400 px the side columns narrow; below 840 px of height the architecture caption and legend hide and the composer tightens; below 1100 px the library becomes a horizontal strip; below 900 px everything stacks. The architecture can be hidden with `A` when screen space is short.
 
-Depth comes from tonal surfaces and thin borders, without drop shadows. This keeps progress, status, and cited text more prominent than decoration.
+## Motion
 
-## Shapes
-
-Panels use softly rounded corners; controls use a slightly tighter radius. Status chips are pill-shaped. Thin rules and progress lines express the sequence of work.
+Motion only encodes state: marching dashes and packets on edges that are carrying work, a halo on active nodes, a sweep on indeterminate progress, a short reveal as an answer arrives, a page pill when the reader jumps. `prefers-reduced-motion` turns all of it off.
 
 ## Components
 
-The sample-paper button is the first-run path. The primary answer button uses solid mint; the upload button and preset questions are quieter until available. Document and answer chips show real state from the API. Source cards disclose excerpts and a PDF page link when the selected file is available locally. Focus outlines and reduced-motion behavior are defined in the stylesheet.
+- **Topology node**: rounded box, category stripe, title, live mono metric, status dot. States: idle, active, done, error, gated (the Textract tag). Click or Enter opens a service card with role, configuration from `template.yaml`, and the live metric.
+- **Paper row**: serif title, mono metadata, state label (Index, n/total, Ready, Failed) and a hairline progress bar while indexing.
+- **Turn**: question, four-step timeline with measured timings, serif answer with citation chips, evidence ribbon, source cards with similarity bars. Retrieved but uncited sources are dimmed and labelled.
+- **Evidence ribbon**: one cell per page (pages are binned beyond 60), opacity scaled by the best cosine similarity on that page, a dot under pages the answer cites. Clicking a cell opens that page.
+- **Event stream**: timestamp, kind (HTTP, STATE, OK, ERROR), message, latency.
 
-## Do's and Don'ts
+## Rules
 
-- Show actual job state and source evidence before presenting a result as complete.
-- Preserve the two-column relationship between paper status and answer evidence on desktop.
-- Use uppercase tracking only on short labels.
-- Keep answer content as text and link only recognized source citations.
-- Do not imply OCR works for scanned PDFs in the current AWS account.
+- Show real state; never animate progress that the API has not reported.
+- Keep the answer, its citations and the cited page reachable in one click.
+- Model and PDF text is always inserted as text nodes, never as HTML.
+- AWS credentials stay in the local server; the page only calls `127.0.0.1`.
+- Do not imply OCR works: the Textract gate is labelled wherever extraction is shown.

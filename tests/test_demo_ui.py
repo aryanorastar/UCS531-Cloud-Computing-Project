@@ -69,7 +69,8 @@ def live_proxy(tmp_path):
     sample.write_bytes(b"%PDF-sample")
     client = FakeClient()
     server = ThreadingHTTPServer(
-        ("127.0.0.1", 0), make_handler(client, static_root=static, sample_pdf=sample)
+        ("127.0.0.1", 0),
+        make_handler(client, static_root=static, sample_pdf=sample, state_dir=tmp_path / "state"),
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -174,3 +175,53 @@ def test_server_refuses_public_binding(capsys):
         )
     assert error.value.code == 2
     assert "must listen on localhost only" in capsys.readouterr().err
+
+
+def test_paper_catalog_library_and_reader_routes(live_proxy):
+    base, client = live_proxy
+    catalog = requests.get(f"{base}/api/papers", timeout=3).json()
+    assert catalog["default"] == "sample.pdf"
+    assert [paper["name"] for paper in catalog["papers"]] == ["sample.pdf"]
+    assert "path" not in catalog["papers"][0]
+    assert requests.get(f"{base}/papers/sample.pdf", timeout=3).content == b"%PDF-sample"
+    assert requests.get(f"{base}/papers/unknown.pdf", timeout=3).status_code == 404
+
+    for paper in ("../client.py", [], None):
+        unknown = requests.post(f"{base}/api/sample-document", json={"paper": paper}, timeout=3)
+        assert unknown.status_code == 400
+    chosen = requests.post(f"{base}/api/sample-document", json={"paper": "sample.pdf"}, timeout=3)
+    assert chosen.status_code == 201
+    assert chosen.json()["pdf_url"] == f"/api/documents/{DOCUMENT_ID}/pdf"
+    assert isinstance(chosen.json()["upload_ms"], int)
+
+    library = requests.get(f"{base}/api/library", timeout=3).json()["documents"]
+    assert [(entry["document_id"], entry["paper"]) for entry in library] == [(DOCUMENT_ID, "sample.pdf")]
+    reader = requests.get(f"{base}/api/documents/{DOCUMENT_ID}/pdf", timeout=3)
+    assert reader.headers["Content-Type"] == "application/pdf"
+    assert reader.content == b"%PDF-sample"
+
+    # A custom upload replaces the entry, and its bytes are cached for the reader.
+    requests.post(
+        f"{base}/api/documents", files={"file": ("mine.pdf", b"%PDF-mine", "application/pdf")}, timeout=3
+    )
+    library = requests.get(f"{base}/api/library", timeout=3).json()["documents"]
+    assert len(library) == 1 and library[0]["paper"] is None and library[0]["filename"] == "mine.pdf"
+    assert requests.get(f"{base}/api/documents/{DOCUMENT_ID}/pdf", timeout=3).content == b"%PDF-mine"
+
+    cross_site = requests.delete(
+        f"{base}/api/library/{DOCUMENT_ID}", headers={"Origin": "https://unrelated.example"}, timeout=3
+    )
+    assert cross_site.status_code == 403
+    assert requests.delete(f"{base}/api/library/{DOCUMENT_ID}", timeout=3).json() == {"removed": True}
+    assert requests.delete(f"{base}/api/library/{DOCUMENT_ID}", timeout=3).status_code == 404
+    assert requests.get(f"{base}/api/library", timeout=3).json()["documents"] == []
+
+    registered = requests.post(f"{base}/api/library", json={"document_id": DOCUMENT_ID}, timeout=3)
+    assert registered.status_code == 200
+    assert registered.json()["document"]["status"] == "READY"
+    assert registered.json()["entry"]["filename"] == "sample.pdf"
+    # The cached upload's own bytes win over the bundled paper with the same filename.
+    assert registered.json()["entry"]["paper"] is None
+    assert requests.get(f"{base}/api/documents/{DOCUMENT_ID}/pdf", timeout=3).content == b"%PDF-mine"
+    assert client.calls[-1][:2] == ("GET", f"/documents/{DOCUMENT_ID}")
+    assert requests.post(f"{base}/api/library", json={"document_id": "bad"}, timeout=3).status_code == 400

@@ -4,7 +4,7 @@ Use this as a speaking and demo checklist. The project is a **serverless retriev
 
 ## The 30-second explanation
 
-> “I built a browser demo for an event-driven PDF question-answering system on AWS. I can upload a paper, watch its processing state, ask a question, and inspect the answer beside its source pages. Behind the page, an IAM-signed Python client sends requests to the deployed API. S3, Lambda, DynamoDB Streams, Titan embeddings, SQS, and Nova 2 Lite do the actual processing. The verified Transformer-paper run indexed 38 text chunks. This account's Textract subscription gate means scanned-page OCR is still unverified.”
+> "Folio is a question-answering system for research papers that runs entirely on serverless AWS. When I upload a PDF, S3, Lambda, DynamoDB Streams and Bedrock's Titan model extract and index it; the diagram at the top lights up each service as the real state changes. When I ask a question, Lambda ranks the paper's chunks by cosine similarity, SQS hands the best passages to a worker, and Nova 2 Lite writes an answer that cites pages. Clicking a citation opens that page of the PDF. The browser never sees AWS credentials: a local server signs every call with IAM SigV4."
 
 **Define RAG simply:** first *retrieve* relevant passages from the uploaded material, then *generate* an answer using those passages as context. The model is not fine-tuned on these papers.
 
@@ -44,18 +44,18 @@ Python client ── POST /query ── Lambda ── embed question + cosine se
 
 ## Five-minute demonstration
 
-Before the evaluation, start the browser demo with the same AWS identity used to upload the document; follow [the browser launch steps](DEPLOYMENT.md). Choose the included Transformer sample and let it reach `READY` before the timed slot. Keep that tab open with a question and source pages available. A new upload or model answer can take longer than the speaking slot, so keep the verified CloudShell smoke output and [PDF slides](../presentation/UCS531_Lab_Evaluation.pdf) available as backup.
+Before the slot: run `aws login --profile ucs531-demo --region us-east-1`, start the server ([run steps](DEPLOYMENT.md#run-the-browser-demo-against-the-existing-stack)), open `http://127.0.0.1:8080` and check the pill says **AWS LIVE · US-EAST-1**. All five bundled papers are already indexed. Open *Attention Is All You Need*. Use full screen; press `A` to hide the architecture if the projector is small.
 
-| Time | Show | Say |
+| Time | Do | Say |
 | --- | --- | --- |
-| 0:00–0:35 | Browser demo home | State the problem and define retrieval-augmented generation: find relevant passages, then answer from them. |
-| 0:35–1:20 | Sample document card and its `READY` status | Point out that upload, extraction, chunking, and Titan indexing are asynchronous; `READY` means all expected chunks are indexed. |
-| 1:20–2:45 | Ask “How does the Transformer use attention?” | Show the queued answer state and the Nova 2 Lite result. The answer worker retrieves trusted passages itself. |
-| 2:45–3:30 | Source cards and page numbers | Expand a source card and compare its excerpt with the answer. Explain that stored page metadata comes from the indexed PDF. |
-| 3:30–4:30 | UI pipeline diagram, then `template.yaml` if asked | Trace the browser → local signed client → API Gateway → S3/Lambda/DynamoDB/Bedrock/SQS path. The UI does not contain AWS credentials. |
-| 4:30–5:00 | Extraction method and limitation label | State that the live text-PDF path passed, while Textract OCR on scans is blocked in this account and citation quality still needs broader measurement. |
+| 0:00–0:30 | Point at the whole screen | The problem (long papers hide short answers) and RAG in one line: retrieve the relevant passages, then generate only from them. |
+| 0:30–1:30 | Open the GAN paper and press **Re-index live** | Narrate the top diagram as it lights up: presigned PUT straight to S3 → S3 event → λ process → Textract is gated on this account so pypdf reads the text layer → chunks written to DynamoDB → Streams trigger λ embed → Titan vectors. The counter and event stream are real. READY arrives in about 10–15 s. |
+| 1:30–2:45 | Back on the Transformer paper, click **How does self-attention work…** | Watch the Ask lane: λ query embeds the question and ranks 38 chunks (retrieval time shows on the node), λ answer returns HTTP 202, SQS queues the job, the worker calls Nova. Point at the Retrieve / Queue / Generate timings. |
+| 2:45–3:30 | Click a citation chip, then the evidence strip | The reader jumps to the cited page so the claim can be checked. The strip shows where in the paper the evidence lives; dots are pages actually cited, dimmed cards were retrieved but not used. |
+| 3:30–4:15 | Click **Off-topic test ↯** | The question is outside the paper, so the answer says there is not enough evidence. That is the grounding working, not a failure. |
+| 4:15–5:00 | Click the **SQS** and **API Gateway** nodes; open the event stream with `` ` `` | Each card states the real configuration from `template.yaml` (throttling, DLQ, IAM). Close with the honest limits: OCR is gated, accuracy is not yet benchmarked. |
 
-The source IDs, excerpts, and page metadata come from the API response. The UI builds links to the included sample PDF or browser-selected local file at the returned page number; those links do not make the private S3 object public. The live run verified a rendered link and an expanded source excerpt, but did not independently verify opening the PDF in a new tab. Use the excerpt in the timed demo.
+The numbers on screen are measured, not decorative: node metrics and the ingest panel come from the document and answer-job records; timings are measured by the browser around each API call.
 
 If the live browser flow is unavailable during the evaluation, run the offline command below and show the already recorded live AWS smoke result. Describe the offline output as simulated and the recorded cloud result as live.
 
@@ -107,6 +107,11 @@ The smoke test uploads the Transformer paper, waits for `READY`, prints `extract
 | What if an event arrives twice? | Textract starts with a deterministic token; extraction uses deterministic chunk IDs and conditional writes; embedding completion and the counter change atomically. Duplicate external model calls can still happen under concurrent delivery. |
 | What happens on failure? | Recorded failures move a document/job to `FAILED`; retries are bounded and failed deliveries can go to failure queues with alarms. Hard timeouts may leave a state in progress, so automated reconciliation remains future work. |
 | Why not a vector database now? | The initial corpus is small. A document-partition query and exact cosine ranking are simpler and auditable, with explicit search limits. Measure latency and corpus size before adding an index. |
+| What do the colours and moving dots in the diagram mean? | Orange marching edges and dots are work in progress right now, green is finished, red is failed. They are driven by the polled document and job states, not by a timer. |
+| What is the relevance strip under the answer? | One cell per page. Its brightness is the best cosine similarity between the question and any chunk on that page, among the top 10 retrieved. Dots mark pages the answer actually cites. |
+| Why are some source cards dimmed? | The worker sends the top five passages to Nova, but the model may cite only some of them. Dimmed cards were retrieved but not cited, which helps judge how the answer was built. |
+| How is the latency split? | Retrieve is the synchronous `/query` call. Queue is the wait from `POST /answer` until the worker marks the job GENERATING (includes a possible Lambda cold start). Generate is the Nova call until COMPLETED. |
+| Why did the big survey take minutes? | 144 pages became 719 chunks, and DynamoDB Streams invokes the embedding Lambda once per chunk with batch size 1. It took 283 s. Larger batches or parallel shards would speed this up at the cost of coarser retries. |
 | What is the deployment/service model? | AWS public cloud. The application uses managed, serverless services: Lambda (functions), API Gateway, S3, DynamoDB, SQS/SNS, Textract, and Bedrock. SAM/CloudFormation provides infrastructure as code. |
 | How would you control cost? | Limit PDF size/pages/chunks and search breadth, use asynchronous work only when needed, inspect per-service usage, set account budgets, and test with small PDFs. A budget and measured per-question cost are not yet configured. |
 
@@ -118,6 +123,7 @@ The smoke test uploads the Transformer paper, waits for `READY`, prints `extract
 - The `rag-pdf` CloudFormation stack in `us-east-1` passed the live smoke at commit `a39914e`. Fresh document `6512893e0649491591ee0d69c68a3ff2` reached `READY` with 38 chunks via `pypdf`; retrieval returned passages; Nova 2 Lite returned a nonempty answer and sources from that document, including S1 page 2 and S2 page 5. This verifies the deployed text-PDF path for one sample.
 - On 27 November 2026, the browser demo at Mac `localhost:8080` used the temporary `ucs531-demo` AWS login profile to upload the same Transformer sample as document `90cedb25809042298d83b23f8eb9711e`. The interface showed 37/38 indexed chunks and then `READY` 38/38 via `pypdf`. A preset question completed with a Nova answer and five source cards; S4 page 5 excerpt expanded. This verifies one real browser-to-AWS flow. Browser failure states and PDF new-tab navigation were not checked in that run.
 - After the UI race fix, a second sample upload first surfaced a transient AWS request failure in the browser. The retry succeeded as document `8334410045ae4b8e945c37f0bcd49988`, reached `READY` 38/38, and returned another five-source cited answer. This verifies the visible error and retry path; asynchronous `FAILED` job states and PDF new-tab navigation remain unchecked.
+- Later the same day the redesigned interface (Folio) was run against the same stack: all five bundled papers reached `READY` (Transformer 38 chunks, BERT 54, ResNet 52, GAN 25, LLM Survey 719 from 144 pages); a live GAN re-index went from upload to `READY` in 10–13 s with each state visible; "How does self-attention work in the encoder and decoder?" returned an answer citing pages 3 and 5 in 7.3 s; and the off-topic question "Who won the 2022 FIFA World Cup?" was declined for lack of evidence.
 - Textract returned `SubscriptionRequiredException` under the account's Free plan. No billing-plan change was made. Textract OCR remains blocked and unverified, and a pypdf result does not show OCR on scanned pages.
 - Current design limits include 25 MiB PDFs, 500 Textract pages, 2,000 chunks per document, and 2,500 chunks per search. The pypdf fallback is capped at 10 MiB, 200 pages, and 1 million characters. It cannot OCR scanned pages. The browser UI is an operator-run local adapter; a public multi-user login, owner-scoped deletion, measured answer-quality benchmark, and automatic recovery for every hard-timeout state remain future work.
 
