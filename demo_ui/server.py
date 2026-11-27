@@ -10,19 +10,24 @@ import mimetypes
 import os
 import re
 import tempfile
+import threading
+import time
 from email.parser import BytesParser
 from email.policy import default
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 import requests
+from pypdf import PdfReader
 
 from client import RagClient
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
-SAMPLE_PDF = ROOT / "pdfs" / "Attention Is All You Need.pdf"
+PAPERS_DIR = ROOT / "pdfs"
+SAMPLE_PDF = PAPERS_DIR / "Attention Is All You Need.pdf"
+STATE_DIR = ROOT / ".demo"
 MAX_PDF_BYTES = 10 * 1024 * 1024
 MAX_MULTIPART_BYTES = MAX_PDF_BYTES + 256 * 1024
 MAX_JSON_BYTES = 8192
@@ -92,11 +97,103 @@ def parse_pdf_multipart(content_type, body):
     return validated_pdf(part.get_filename(), payload)
 
 
-def make_handler(client, *, static_root=STATIC_ROOT, sample_pdf=SAMPLE_PDF):
+def page_count(source):
+    try:
+        return len(PdfReader(source).pages)
+    except Exception:  # A page count is display metadata; an unreadable file must not block the demo.
+        return None
+
+
+def paper_catalog(papers_dir):
+    """List the bundled research PDFs the operator can index with one click."""
+    papers = {}
+    for path in sorted(Path(papers_dir).glob("*.pdf")) if Path(papers_dir).is_dir() else []:
+        papers[path.name] = {
+            "name": path.name,
+            "title": path.stem,
+            "pages": page_count(path),
+            "size_bytes": path.stat().st_size,
+            "url": f"/papers/{quote(path.name)}",
+            "path": path.resolve(),
+        }
+    return papers
+
+
+class Library:
+    """Local record of documents this operator indexed, so the UI survives reloads."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self.lock = threading.Lock()
+
+    def entries(self):
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        return [
+            entry
+            for entry in data
+            if isinstance(entry, dict) and DOCUMENT_ID.fullmatch(str(entry.get("document_id")))
+        ]
+
+    def get(self, document_id):
+        return next((entry for entry in self.entries() if entry["document_id"] == document_id), None)
+
+    def _write(self, entries):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+        temporary.replace(self.path)
+
+    def add(self, entry):
+        with self.lock:
+            entries = [item for item in self.entries() if item["document_id"] != entry["document_id"]]
+            self._write([entry, *entries][:50])
+        return entry
+
+    def remove(self, document_id):
+        with self.lock:
+            entries = self.entries()
+            remaining = [item for item in entries if item["document_id"] != document_id]
+            self._write(remaining)
+        return len(remaining) != len(entries)
+
+
+def make_handler(
+    client,
+    *,
+    static_root=STATIC_ROOT,
+    sample_pdf=SAMPLE_PDF,
+    papers_dir=None,
+    state_dir=STATE_DIR,
+):
     """Create a request handler; injecting a fake client keeps route tests local."""
     static_root = Path(static_root).resolve()
     sample_pdf = Path(sample_pdf).resolve()
+    papers = paper_catalog(papers_dir if papers_dir is not None else sample_pdf.parent)
+    if sample_pdf.name not in papers and sample_pdf.is_file():
+        papers[sample_pdf.name] = {
+            "name": sample_pdf.name,
+            "title": sample_pdf.stem,
+            "pages": page_count(sample_pdf),
+            "size_bytes": sample_pdf.stat().st_size,
+            "url": f"/papers/{quote(sample_pdf.name)}",
+            "path": sample_pdf,
+        }
+    library = Library(Path(state_dir) / "library.json")
+    upload_cache = Path(state_dir) / "uploads"
     allowed_hosts = {"localhost", "127.0.0.1", "::1"}
+
+    def pdf_path(entry):
+        if entry.get("paper") in papers:
+            return papers[entry["paper"]]["path"]
+        cached = upload_cache / f"{entry['document_id']}.pdf"
+        return cached if cached.is_file() else None
+
+    def with_reader(entry):
+        has_pdf = pdf_path(entry) is not None
+        return {**entry, "pdf_url": f"/api/documents/{entry['document_id']}/pdf" if has_pdf else None}
 
     class DemoHandler(BaseHTTPRequestHandler):
         def _send(self, status, payload, content_type, *, extra_headers=None):
@@ -158,19 +255,41 @@ def make_handler(client, *, static_root=STATIC_ROOT, sample_pdf=SAMPLE_PDF):
             if not hostname or hostname.lower() not in allowed_hosts:
                 raise DemoRequestError(403, "Open this demo through localhost.")
 
-        def _upload(self, filename, payload):
+        def _upload(self, filename, payload, *, paper=None):
             filename, payload = validated_pdf(filename, payload)
+            started = time.monotonic()
             with tempfile.TemporaryDirectory(prefix="rag-demo-") as directory:
                 path = Path(directory) / filename
                 path.write_bytes(payload)
+                pages = page_count(path)
                 document_id = client.upload(path)
+            if paper is None:
+                # Keep a local copy so the reader can show this PDF after a page reload.
+                upload_cache.mkdir(parents=True, exist_ok=True)
+                (upload_cache / f"{document_id}.pdf").write_bytes(payload)
+            entry = library.add(
+                {
+                    "document_id": document_id,
+                    "filename": filename,
+                    "paper": paper,
+                    "pages": pages,
+                    "size_bytes": len(payload),
+                    "upload_ms": round((time.monotonic() - started) * 1000),
+                    "added_at": int(time.time()),
+                }
+            )
             return {
-                "document_id": document_id,
-                "filename": filename,
+                **with_reader(entry),
                 "status": "AWAITING_UPLOAD",
                 "completed_chunks": 0,
                 "total_chunks": 0,
             }
+
+        def _document_pdf(self, document_id):
+            path = pdf_path(library.get(document_id) or {"document_id": document_id})
+            if path is None:
+                raise DemoRequestError(404, "No local copy of this PDF is available for the reader.")
+            return path
 
         def _serve_file(self, path, *, content_type=None):
             if not path.is_file():
@@ -192,9 +311,26 @@ def make_handler(client, *, static_root=STATIC_ROOT, sample_pdf=SAMPLE_PDF):
                     },
                 )
                 return
+            if path == "/api/papers":
+                public = [{k: v for k, v in paper.items() if k != "path"} for paper in papers.values()]
+                self._json(200, {"papers": public, "default": sample_pdf.name})
+                return
+            if path == "/api/library":
+                self._json(200, {"documents": [with_reader(entry) for entry in library.entries()]})
+                return
+            if path.startswith("/api/documents/") and path.endswith("/pdf"):
+                document_id = validated_id(path.removeprefix("/api/documents/").removesuffix("/pdf"))
+                self._serve_file(self._document_pdf(document_id), content_type="application/pdf")
+                return
             if path.startswith("/api/documents/"):
                 document_id = validated_id(path.removeprefix("/api/documents/"))
                 self._json(200, client.request("GET", f"/documents/{document_id}"))
+                return
+            if path.startswith("/papers/"):
+                paper = papers.get(path.removeprefix("/papers/"))
+                if paper is None:
+                    raise DemoRequestError(404, "Page not found.")
+                self._serve_file(paper["path"], content_type="application/pdf")
                 return
             if path.startswith("/api/answers/"):
                 job_id = validated_id(path.removeprefix("/api/answers/"))
@@ -226,9 +362,30 @@ def make_handler(client, *, static_root=STATIC_ROOT, sample_pdf=SAMPLE_PDF):
                 self._json(201, self._upload(filename, payload))
                 return
             if path == "/api/sample-document":
+                name = sample_pdf.name
                 if self.headers.get("Content-Length") not in {None, "0"}:
-                    raise DemoRequestError(400, "The sample upload does not take a request body.")
-                self._json(201, self._upload(sample_pdf.name, sample_pdf.read_bytes()))
+                    name = self._read_json().get("paper")
+                    if not isinstance(name, str) or name not in papers:
+                        raise DemoRequestError(400, "Choose one of the bundled sample papers.")
+                if name not in papers:
+                    raise DemoRequestError(404, "No bundled sample paper is available.")
+                paper = papers[name]
+                self._json(201, self._upload(name, paper["path"].read_bytes(), paper=name))
+                return
+            if path == "/api/library":
+                document_id = validated_id(self._read_json().get("document_id"))
+                document = client.request("GET", f"/documents/{document_id}")
+                filename = document.get("filename") or "Research paper.pdf"
+                # A cached upload keeps its own bytes even if it shares a bundled paper's name.
+                bundled = filename in papers and not (upload_cache / f"{document_id}.pdf").is_file()
+                entry = library.get(document_id) or {
+                    "document_id": document_id,
+                    "filename": filename,
+                    "paper": filename if bundled else None,
+                    "pages": papers[filename]["pages"] if bundled else None,
+                    "added_at": int(time.time()),
+                }
+                self._json(200, {"entry": with_reader(library.add(entry)), "document": document})
                 return
             if path in {"/api/query", "/api/answers"}:
                 request_data = question_input(self._read_json())
@@ -238,11 +395,22 @@ def make_handler(client, *, static_root=STATIC_ROOT, sample_pdf=SAMPLE_PDF):
                 return
             raise DemoRequestError(404, "Page not found.")
 
+        def _dispatch_delete(self):
+            self._check_post_origin()
+            path = urlsplit(self.path).path
+            if not path.startswith("/api/library/"):
+                raise DemoRequestError(404, "Page not found.")
+            # Forgetting only edits the local list; the AWS document is not deleted.
+            removed = library.remove(validated_id(path.removeprefix("/api/library/")))
+            self._json(200 if removed else 404, {"removed": removed})
+
         def _handle(self, method):
             try:
                 self._check_host()
                 if method == "GET":
                     self._dispatch_get()
+                elif method == "DELETE":
+                    self._dispatch_delete()
                 else:
                     self._dispatch_post()
             except DemoRequestError as error:
@@ -260,6 +428,9 @@ def make_handler(client, *, static_root=STATIC_ROOT, sample_pdf=SAMPLE_PDF):
 
         def do_POST(self):
             self._handle("POST")
+
+        def do_DELETE(self):
+            self._handle("DELETE")
 
     return DemoHandler
 
