@@ -56,6 +56,24 @@ def test_event_source_roles_can_read_their_scoped_sources():
     )
 
 
+def test_text_fallback_starter_can_write_chunks_and_update_document_state():
+    template = yaml.load(Path("template.yaml").read_text(), Loader=SamLoader)
+    resources = template["Resources"]
+    starter = statements(resources, "ProcessDocumentBatch")
+    assert any(
+        statement["Effect"] == "Allow"
+        and statement["Resource"] == "ChunksTable.Arn"
+        and statement["Action"] == "dynamodb:PutItem"
+        for statement in starter
+    )
+    assert any(
+        statement["Effect"] == "Allow"
+        and statement["Resource"] == "DocumentsTable.Arn"
+        and {"dynamodb:GetItem", "dynamodb:UpdateItem"} <= set(statement["Action"])
+        for statement in starter
+    )
+
+
 def test_generation_role_can_invoke_nova_profile_and_all_destinations():
     template = yaml.load(Path("template.yaml").read_text(), Loader=SamLoader)
     assert template["Parameters"]["GenerationModelId"]["Default"] == "us.amazon.nova-2-lite-v1:0"

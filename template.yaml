@@ -264,6 +264,9 @@ Resources:
               Action: [dynamodb:GetItem, dynamodb:UpdateItem]
               Resource: !GetAtt DocumentsTable.Arn
             - Effect: Allow
+              Action: dynamodb:PutItem
+              Resource: !GetAtt ChunksTable.Arn
+            - Effect: Allow
               Action: textract:StartDocumentTextDetection
               Resource: '*'
             - Effect: Allow
