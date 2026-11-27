@@ -8,7 +8,7 @@ web
 
 ## Stack
 
-Folio, the lab demo interface: plain HTML, CSS, and JavaScript (no build step, no external fonts or libraries) served by a small Python standard-library process. The process uses the existing IAM-signed `RagClient` and AWS credential chain. This keeps AWS credentials out of browser code and avoids a frontend build step during the lab.
+Folio, the lab demo interface: plain HTML, CSS, and JavaScript with no build step and no network dependencies (system fonts; PDF.js 4.10.38 vendored under `demo_ui/static/vendor/` to render PDFs and locate cited passages), served by a small Python standard-library process. The process uses the existing IAM-signed `RagClient` and AWS credential chain. This keeps AWS credentials out of browser code and avoids a frontend build step during the lab.
 
 ## Users
 

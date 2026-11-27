@@ -44,14 +44,14 @@ Python client ── POST /query ── Lambda ── embed question + cosine se
 
 ## Five-minute demonstration
 
-Before the slot: run `aws login --profile ucs531-demo --region us-east-1`, start the server ([run steps](DEPLOYMENT.md#run-the-browser-demo-against-the-existing-stack)), open `http://127.0.0.1:8080` and check the pill says **AWS LIVE · US-EAST-1**. All five bundled papers are already indexed. Open *Attention Is All You Need*. Use full screen; press `A` to hide the architecture if the projector is small.
+Before the slot: run `aws login --profile ucs531-demo --region us-east-1`, start the server ([run steps](DEPLOYMENT.md#run-the-browser-demo-against-the-existing-stack)), open `http://127.0.0.1:8080` and check the pill says **AWS LIVE · US-EAST-1**. The intro screen appears once per browser session: leave it up as your opening slide and press Enter when you start. All five bundled papers are already indexed. Use full screen; press `A` for the compact architecture if the projector is small.
 
 | Time | Do | Say |
 | --- | --- | --- |
 | 0:00–0:30 | Point at the whole screen | The problem (long papers hide short answers) and RAG in one line: retrieve the relevant passages, then generate only from them. |
 | 0:30–1:30 | Open the GAN paper and press **Re-index live** | Narrate the top diagram as it lights up: presigned PUT straight to S3 → S3 event → λ process → Textract is gated on this account so pypdf reads the text layer → chunks written to DynamoDB → Streams trigger λ embed → Titan vectors. The counter and event stream are real. READY arrives in about 10–15 s. |
 | 1:30–2:45 | Back on the Transformer paper, click **How does self-attention work…** | Watch the Ask lane: λ query embeds the question and ranks 38 chunks (retrieval time shows on the node), λ answer returns HTTP 202, SQS queues the job, the worker calls Nova. Point at the Retrieve / Queue / Generate timings. |
-| 2:45–3:30 | Click a citation chip, then the evidence strip | The reader jumps to the cited page so the claim can be checked. The strip shows where in the paper the evidence lives; dots are pages actually cited, dimmed cards were retrieved but not used. |
+| 2:45–3:30 | Click a citation chip, then a lit cell in the chunk map | The reader scrolls to the cited page and highlights the exact passage, so the claim can be checked against the paper. The chunk map and strip show where the evidence lives; outlined cells and dots are what the answer actually cited, dimmed cards were retrieved but not used. |
 | 3:30–4:15 | Click **Off-topic test ↯** | The question is outside the paper, so the answer says there is not enough evidence. That is the grounding working, not a failure. |
 | 4:15–5:00 | Click the **SQS** and **API Gateway** nodes; open the event stream with `` ` `` | Each card states the real configuration from `template.yaml` (throttling, DLQ, IAM). Close with the honest limits: OCR is gated, accuracy is not yet benchmarked. |
 

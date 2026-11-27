@@ -80,6 +80,7 @@ Acceptance: the deployed backend answered a question about a fresh uploaded Tran
 - [x] Verify a recoverable browser error: a transient AWS upload request failure appeared in the UI, and retrying the sample upload reached `READY` 38/38 and another cited answer.
 - [x] Redesign the browser demo as Folio: live two-lane architecture driven by real states, service cards, library of all bundled papers, embedded PDF reader that jumps to cited pages, timed Retrieve/Queue/Generate steps, evidence ribbon with similarity scores, cited-versus-retrieved sources, event stream, light/dark themes, keyboard shortcuts.
 - [x] Verify Folio live on 27 November 2026: all five bundled papers `READY` (25–719 chunks), live GAN re-index in 10–13 s, cited answer in 7.3 s, off-topic question declined.
+- [x] Folio v2: PDF.js reader that highlights the exact cited passage, AWS-boundary architecture with service icons and live narration, cover-thumbnail library, chunk map, command palette, intro, toasts, live stopwatches. Verified live on 28 November 2026 (GAN re-index 12–15 s; cited answer 4.1–7.1 s with the S1 passage highlighted on page 3).
 - [x] Fix large uploads on slow links: the S3 PUT used a 5 s connect timeout that urllib3 also applies to body writes, so the 8.6 MB survey failed; it now uses 60 s.
 - [ ] Verify asynchronous document/answer `FAILED` displays in the browser. The live run checked the generated source target and expanded excerpt, not the new-tab behavior.
 - [ ] Add document listing and owner-scoped deletion through the same API/store.

@@ -2,7 +2,7 @@
 
 Upload a research paper, watch AWS index it, then ask questions. Answers are generated only from retrieved passages of that paper, and every claim carries a page citation you can click.
 
-![Folio answering a question about the Transformer paper. The live architecture is lit green, the answer shows its timings and citations, and the reader is open on the cited page 5.](docs/assets/folio-answer.jpg)
+![Folio after a live question about the GAN paper: the architecture is lit green, the narration names the cited pages, the reader highlights the cited passage with its S1 tag, and the chunk map shows which chunks were retrieved.](docs/assets/folio-answer.jpg)
 
 **AWS services:** API Gateway (IAM auth) · six Lambda functions · S3 · Textract with a pypdf fallback · DynamoDB + Streams · SQS · Bedrock (Titan Text Embeddings V2, Nova 2 Lite) · CloudWatch · all declared in one AWS SAM template. Private repository: [aryanorastar/UCS531-Cloud-Computing-Project](https://github.com/aryanorastar/UCS531-Cloud-Computing-Project). Course: UCS531 Cloud Computing.
 
@@ -20,31 +20,33 @@ Open <http://127.0.0.1:8080>. Set up `.venv` first with [Quick start](#quick-sta
 
 | Area | What it does | Data source |
 | --- | --- | --- |
-| **Live architecture** | Sixteen service nodes on the ingest and ask paths light up, animate and show live numbers (chunks embedded, retrieval time, generation time). Select a node to see its role and configuration. | Document and answer-job states polled from the API; configuration from `template.yaml` |
-| **Library** | The five bundled papers with one-click indexing, your own PDF uploads, and reopening any document ID | Local list in `.demo/library.json` plus live status per document |
-| **Reader** | The PDF itself. Clicking a citation jumps to its page. | Bundled PDF, or a local copy of your upload |
-| **Ask thread** | Retrieve → Queue → Generate → Cite timeline with measured timings, an answer with clickable `[S1]` chips, and a hover preview of each passage | `/query` (top 10 with cosine scores) and the `/answer` job |
-| **Where the evidence is** | A heat strip across every page showing how close each page's best chunk is to the question. Dots mark pages the answer actually cites; retrieved but uncited passages are dimmed. | `similarity_score` from retrieval |
-| **Event stream** | A CloudWatch-style log of every call and state transition with its latency | Measured in the browser |
-| **Re-index live** | Uploads a bundled paper again as a new document so the whole ingest path can be watched (the 9-page GAN paper takes about 10–15 s) | Real upload |
-| **Off-topic test** | Asks a question the paper cannot answer. A grounded system declines. | Real answer |
+| **Live architecture** | An AWS-style diagram (your Mac on the left, the `rag-pdf` stack in `us-east-1` on the right) with sixteen iconised services on the ingest and ask paths. Nodes glow and particles flow along edges as real states change; each node shows a live number (chunks embedded, retrieval time, generation time). Select a node for its role and configuration. **Full** or **Compact** view. | Document and answer-job states polled from the API; configuration from `template.yaml` |
+| **Narration** | One plain-English sentence per real event, for example "Textract is gated on this account, so pypdf read the text layer: 25 chunks written to DynamoDB." | The same state transitions |
+| **Library** | Cover thumbnails of the five bundled papers with one-click indexing, your own uploads, and reopening any document ID | Local list in `.demo/library.json` plus live status per document |
+| **Reader** | The PDF rendered with PDF.js. Clicking a citation scrolls to the page and **highlights the exact cited passage** with its `S1`…`S5` tag. | Bundled PDF or a local copy of your upload; passage text from the answer's sources |
+| **Chunk map** | One cell per chunk: cells fill as Titan embeds them, then light up by cosine score after a question; cited chunks are outlined. Click a lit cell to open its passage. | `completed_chunks`, `chunk_index`, `similarity_score` |
+| **Ask thread** | Retrieve → Queue → Generate → Cite with live stopwatches, an answer with clickable `[S1]` chips and passage previews, a page-relevance strip, cited-versus-retrieved sources, and follow-up questions | `/query` (top 10 with cosine scores) and the `/answer` job |
+| **Command palette** | `⌘K`: open a paper, ask a suggested or typed question, jump to any AWS service card, re-index, switch theme | Local |
+| **Event stream** | A CloudWatch-style log of every call and state transition with latency, plus running averages | Measured in the browser |
+| **Re-index live** / **Off-topic test** | Upload a bundled paper again to watch the whole ingest (GAN: about 12–15 s); ask a question the paper cannot answer to see the system decline | Real upload and real answer |
 
-Keys: `/` ask · `` ` `` event stream · `A` architecture · `T` light or dark theme.
+Keys: `⌘K` palette · `/` ask · `` ` `` event stream · `A` architecture view · `T` light or dark theme. A short intro plays once per browser session (add `?nointro` to skip it).
 
-| Service card (SQS) | Evidence view, light theme |
-| --- | --- |
-| ![Clicking the Amazon SQS node opens a card with its role, visibility timeout, dead-letter queue and alarm.](docs/assets/folio-service-card.jpg) | ![Light theme: the evidence strip over 15 pages and five source cards, three dimmed as retrieved but not cited.](docs/assets/folio-light-evidence.jpg) |
+![Live ingest of the GAN paper: DynamoDB, the embedding Lambda and Titan glow at 16 of 25 chunks, the narration explains the step, and the chunk map fills as chunks are embedded.](docs/assets/folio-live-ingest.jpg)
 
-![Live ingest of the GAN paper: DynamoDB, the embedding Lambda and Titan are active at 9/25 chunks while the event stream logs each state change.](docs/assets/folio-live-ingest.jpg)
+| Intro | Service card (SQS) | Light theme |
+| --- | --- | --- |
+| ![The intro screen: the Folio title over an animated line of AWS services, with live counts of indexed papers and chunks.](docs/assets/folio-intro.jpg) | ![Clicking the Amazon SQS node opens a card with its role, visibility timeout, dead-letter queue, alarm and the current job.](docs/assets/folio-service-card.jpg) | ![Light theme with the evidence strip and source cards.](docs/assets/folio-light-evidence.jpg) |
 
 The browser never receives AWS credentials. The page talks to a localhost-only Python server, which signs every request with SigV4 through `RagClient`. It accepts writes only from its own origin and refuses to bind to anything except localhost. It is an operator demo, not a public multi-user site.
 
-## Verified live (27 November 2026, `us-east-1`)
+## Verified live (27–28 November 2026, `us-east-1`)
 
 | Check | Result |
 | --- | --- |
 | All five bundled papers indexed by the deployed stack | Transformer 38 chunks in 17 s · BERT 54 in 30 s · ResNet 52 in 19 s · GAN 25 in 18 s (live re-index: 10–13 s) · LLM Survey, 144 pages → 719 chunks in 283 s. All used the pypdf text layer. |
 | Question → cited answer in the browser | "How does self-attention work in the encoder and decoder?" answered in 7.3 s, citing pages 3 and 5 of the Transformer paper |
+| Passage highlighting (Folio v2, 28 Nov) | Two fresh GAN re-indexes reached `READY` in 12–15 s; “How do the generator and discriminator compete?” was answered in 4.1–7.1 s citing pages 1, 3 and 4, and the reader located and highlighted the S1 passage on page 3 (11 lines) |
 | Grounding check | "Who won the 2022 FIFA World Cup?" asked of the GAN paper returned "the documents do not provide enough evidence" in 3.2 s |
 | Command-line smoke test | `scripts/smoke_test.py` passed upload → `READY` → retrieval → Nova answer from AWS CloudShell at commit `a39914e` |
 | Textract OCR | **Blocked.** `StartDocumentTextDetection` returns `SubscriptionRequiredException` on this account's Free plan, so scanned (image-only) PDFs cannot be read. No billing change was made. |
