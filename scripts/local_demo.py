@@ -57,7 +57,7 @@ def best_sentence(text, question):
 
 
 class DemoBedrock:
-    """Deterministic local substitutes; results are not Titan or DeepSeek output."""
+    """Deterministic local substitutes; results are not Titan or Nova output."""
 
     def invoke_model(self, **request):
         payload = json.loads(request["body"])
@@ -237,7 +237,7 @@ def run(pdf=DEFAULT_PDF, question=DEFAULT_QUESTION):
                 ),
             ),
         ):
-            print("LOCAL SIMULATION — actual PDF text; no AWS account, Textract, Titan, or DeepSeek calls")
+            print("LOCAL SIMULATION — actual PDF text; no AWS account, Textract, Titan, or Nova calls")
             registration = api_data(
                 get_presigned_url.lambda_handler(
                     api_event({"filename": pdf.name, "size_bytes": len(payload)}), None

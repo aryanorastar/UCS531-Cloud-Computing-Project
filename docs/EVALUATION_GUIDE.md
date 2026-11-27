@@ -4,7 +4,7 @@ Use this as a speaking and demo checklist. The project is a **serverless retriev
 
 ## The 30-second explanation
 
-> “I built an event-driven PDF question-answering system on AWS. A client uploads a PDF directly to a private S3 bucket through a short-lived signed URL. S3 starts asynchronous Textract OCR; a notification creates page-aware chunks in DynamoDB; DynamoDB Streams triggers Titan embeddings. A question is embedded and compared with the stored chunks, and an SQS worker asks DeepSeek R1 to answer from the retrieved evidence. The API is IAM-authenticated, answers are polled asynchronously, and the response includes source pages. I can demonstrate the complete orchestration with local AWS simulations. A live AWS/model run is a separate acceptance step and should be claimed only if it has actually passed.”
+> “I implemented an event-driven PDF question-answering system for AWS. A client uploads a PDF directly to a private S3 bucket through a short-lived signed URL. S3 starts asynchronous Textract OCR; a notification creates page-aware chunks in DynamoDB; DynamoDB Streams triggers Titan embeddings. A question is embedded and compared with the stored chunks, and an SQS worker asks Nova 2 Lite to answer from the retrieved evidence. The API is IAM-authenticated, answers are polled asynchronously, and the response includes source pages. I can demonstrate the complete orchestration with local AWS simulations. Direct Titan and Nova model calls worked in CloudShell, while deployment and the full cloud flow remain to be verified.”
 
 **Define RAG simply:** first *retrieve* relevant passages from the uploaded material, then *generate* an answer using those passages as context. The model is not fine-tuned on these papers.
 
@@ -33,7 +33,7 @@ Python client ── POST /query ── Lambda ── embed question + cosine se
        │
        └──────── POST /answer ── Lambda ── SQS ── worker Lambda
                                                  │ trusted retrieval
-                                                 └── Bedrock DeepSeek R1
+                                                 └── Bedrock Nova 2 Lite
        └──────── GET /answers/{job_id} ── answer + source filenames/pages
 ```
 
@@ -52,7 +52,7 @@ Before the evaluation, install the dependencies in a Python 3.12 virtual environ
 | 3:10–4:05 | `lambda_functions/shared/rag.py`, `lambda_functions/generate_answer.py` | Explain document-scoped cosine retrieval, asynchronous generation, and why the worker retrieves passages itself instead of trusting client-supplied text. |
 | 4:05–5:00 | Run the appropriate verification below | State exactly what was exercised. End with one limitation and one measured next step. |
 
-### Local demonstration when no AWS account is configured
+### Offline demonstration (available without local AWS credentials)
 
 ```sh
 python -m scripts.local_demo
@@ -60,7 +60,7 @@ python -m pytest -q tests/test_pipeline.py::test_full_sample_pdf_upload_to_answe
 python -m pytest -q
 ```
 
-The local demo parses text from the actual Transformer PDF, prints each state transition and retrieved page, produces a deterministic extractive answer, and checks another IAM identity cannot read the document. Moto simulates S3/DynamoDB/SQS; pypdf substitutes for Textract; deterministic functions substitute for Titan and DeepSeek. The focused test also runs all six handlers in sequence with controlled Textract/Bedrock responses and checks extraction pagination, duplicate delivery, and rejection of forged client passages. The wider suite covers isolation, malformed files, retries, failure states, signing, and model contracts. **Describe this as local integration verification, not as a live AWS or AI-quality result.**
+The local demo parses text from the actual Transformer PDF, prints each state transition and retrieved page, produces a deterministic extractive answer, and checks another IAM identity cannot read the document. Moto simulates S3/DynamoDB/SQS; pypdf substitutes for Textract; deterministic functions substitute for Titan and Nova 2 Lite. The focused test also runs all six handlers in sequence with controlled Textract/Bedrock responses and checks extraction pagination, duplicate delivery, and rejection of forged client passages. The wider suite covers isolation, malformed files, retries, failure states, signing, and model contracts. **Describe this as local integration verification, not as a live AWS or AI-quality result.**
 
 If a command fails on the evaluation machine, show the already obtained test output and the exact environment used. Do not call a failed run a pass.
 
@@ -107,6 +107,7 @@ The smoke test uploads the Transformer paper, waits for `READY`, checks document
 
 - The repository contains a deployable SAM template, six handlers, a signed Python client, a smoke-test command, and local integration tests. See `README.md`, `ARCHITECTURE.md`, and `ROADMAP.md` for the current status.
 - Local tests simulate AWS data services and control Textract/Bedrock replies. They prove orchestration and many failure checks, **not** live IAM permissions, OCR accuracy, model quality, or cloud latency.
+- On 27 November 2026 in `us-east-1`, a separate AWS CloudShell session successfully invoked Titan V2 and the Nova 2 Lite US inference profile through Bedrock Converse. The earlier DeepSeek R1 invocation was blocked as Legacy. These direct probes do not exercise the deployed Lambda roles or the PDF pipeline.
 - A real deployment and real-model smoke test must be described as verified only after it passes in the actual AWS account. Keep the exact region, command, and output as evidence.
 - Current design limits include 25 MiB PDFs, 500 extraction pages, 2,000 chunks per document, and 2,500 chunks per search. No web UI, owner-scoped deletion, measured answer-quality benchmark, or automatic recovery for every hard-timeout state is claimed.
 

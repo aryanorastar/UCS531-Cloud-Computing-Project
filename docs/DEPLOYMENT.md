@@ -1,6 +1,6 @@
 # Automated deployment
 
-The source implements the full pipeline in `template.yaml`. Live deployment is still pending AWS account credentials. Tests and SAM packaging work without an AWS account; provisioning and the smoke test require one.
+The source implements the full pipeline in `template.yaml`. Direct Titan V2 and Nova 2 Lite calls succeeded from AWS CloudShell in `us-east-1` on 27 November 2026; the stack is not deployed and the PDF smoke test has not run. Tests and SAM packaging work without an AWS account; provisioning and the smoke test require an authorized AWS deployment identity.
 
 ## Local environment
 
@@ -16,9 +16,11 @@ cfn-lint infra/github-oidc.yaml
 sam build --region us-east-1
 ```
 
+If `python3.12` is unavailable but `uv` is installed, create the environment with `uv venv --seed --python 3.12 .venv`, activate it, and install with `uv pip install -r requirements-dev.txt`. The `--seed` option provides pip for the SAM build.
+
 Sign in with your usual AWS credential method. The scripts use the default credential chain or a named `--profile`; no credentials are committed. Your deployment principal needs CloudFormation/SAM provisioning privileges, IAM role creation/PassRole, storage/queue/API/Lambda management, and Bedrock model-definition/profile reads. For live verification it also needs API invocation permission. The AWS SAM-managed artifact bucket requires provisioning permission when `--artifact-bucket` is omitted.
 
-The template selects Titan V2 and DeepSeek R1's US inference profile. Default region is `us-east-1`; `us-east-2` and `us-west-2` are also allowed source regions. Preflight reads the model/profile definitions; runtime model access and service quotas are checked by the live smoke test. Account restrictions or regional SCPs can still deny cross-region Bedrock invocation. [AWS DeepSeek model card](https://docs.aws.amazon.com/en_en/bedrock/latest/userguide/model-card-deepseek-deepseek-r1.html), [inference prerequisites](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html).
+The template selects Titan V2 and Nova 2 Lite's `us.amazon.nova-2-lite-v1:0` US inference profile. Default region is `us-east-1`; the template also allows `us-east-2` and `us-west-2` as source regions. The earlier DeepSeek R1 invocation was blocked as Legacy in this account. Preflight reads model/profile definitions; direct CloudShell probes do not prove Lambda execution-role access, Textract operation, or service quotas for the deployed flow. The live smoke test checks those boundaries. Account restrictions or regional SCPs can still deny cross-region Bedrock invocation. [AWS Nova 2 Lite model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-2-lite.html), [inference prerequisites](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html).
 
 ## Deploy from your default profile
 

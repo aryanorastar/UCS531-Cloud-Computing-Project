@@ -22,7 +22,7 @@ Handler: [generate_answer.py](../lambda_functions/generate_answer.py), API mode.
 
 Use the same question/document/top_k fields as `/query`. The API confirms scope/readiness, creates a job, sends its ID to SQS, and responds **HTTP 202** with `job_id`, `status: QUEUED`, and `status_url`.
 
-Do not expect a synchronous answer body. Client-supplied `top_chunks` are ignored. The worker repeats trusted retrieval from storage, invokes `us.deepseek.r1-v1:0` through Bedrock Converse, and stores an answer and source metadata. The prompt requests grounded answers, source markers, and abstention without evidence. Actual citation/answer quality still requires live evaluation.
+Do not expect a synchronous answer body. Client-supplied `top_chunks` are ignored. The worker repeats trusted retrieval from storage, invokes `us.amazon.nova-2-lite-v1:0` through Bedrock Converse, and stores an answer and source metadata. The prompt requests grounded answers, source markers, and abstention without evidence. Actual citation/answer quality still requires live evaluation.
 
 ## GET /answers/{job_id}
 

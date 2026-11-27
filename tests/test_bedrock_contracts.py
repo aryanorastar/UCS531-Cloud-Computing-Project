@@ -55,7 +55,11 @@ def test_converse_contract_and_truncated_answer_handling(aws, monkeypatch, stop_
                 "usage": {"inputTokens": 100, "outputTokens": 10, "totalTokens": 110},
                 "metrics": {"latencyMs": 10},
             },
-            {"modelId": "us.deepseek.r1-v1:0", "messages": ANY, "inferenceConfig": {"maxTokens": 4096}},
+            {
+                "modelId": "us.amazon.nova-2-lite-v1:0",
+                "messages": ANY,
+                "inferenceConfig": {"maxTokens": 4096},
+            },
         )
         if stop_reason == "max_tokens":
             with pytest.raises(ApiError, match="output limit") as error:

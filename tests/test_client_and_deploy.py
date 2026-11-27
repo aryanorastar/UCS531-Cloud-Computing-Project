@@ -81,3 +81,21 @@ def test_deployment_does_not_replace_an_unrelated_stack():
         ensure_stack_scope(cf, "rag-pdf")
     cf.describe_stacks.return_value = {"Stacks": [{"Tags": [{"Key": "ManagedBy", "Value": MANAGED_BY}]}]}
     ensure_stack_scope(cf, "rag-pdf")
+
+
+def test_preflight_checks_the_active_nova_profile():
+    session = Mock(region_name="us-east-1")
+    session.get_credentials.return_value = Mock()
+    session.client("sts").get_caller_identity.return_value = {"Account": "123456789012"}
+    bedrock = session.client("bedrock")
+    bedrock.get_inference_profile.return_value = {"status": "ACTIVE"}
+
+    preflight(session)
+
+    bedrock.get_foundation_model.assert_called_once_with(modelIdentifier="amazon.titan-embed-text-v2:0")
+    bedrock.get_inference_profile.assert_called_once_with(
+        inferenceProfileIdentifier="us.amazon.nova-2-lite-v1:0"
+    )
+    bedrock.get_inference_profile.return_value = {"status": "INACTIVE"}
+    with pytest.raises(RuntimeError, match="Nova 2 Lite inference profile is not active"):
+        preflight(session)

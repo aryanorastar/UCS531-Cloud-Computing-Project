@@ -1,6 +1,6 @@
 # Architecture and implementation status
 
-Updated on 27 November 2026. This is the implemented baseline, with live AWS verification still pending account access. [ROADMAP.md](ROADMAP.md) tracks acceptance and remaining work.
+Updated on 27 November 2026. This is the implemented baseline; direct model probes succeeded in AWS CloudShell, while live stack and end-to-end verification remain pending. [ROADMAP.md](ROADMAP.md) tracks acceptance and remaining work.
 
 ## Evidence and scope
 
@@ -8,7 +8,7 @@ The imported repository contained only a notebook, manual guides, and five resea
 
 The previous deployment endpoint, stored document IDs, saved outputs, upstream Git remote, and inherited active history were removed before implementation. This project has no dependency on that deployment. The research PDF files are unchanged.
 
-No AWS profile or credentials were available in the evaluation workspace on 27 November 2026, so no live stack or real-model end-to-end run has been confirmed. The deployment script stops before creating resources when credentials are missing.
+No AWS profile or deployment role was available in the local evaluation workspace on 27 November 2026, so no live stack or real-model end-to-end run has been confirmed. A separate AWS CloudShell session in `us-east-1`, signed in as the account root identity, successfully invoked Titan V2 directly and invoked `us.amazon.nova-2-lite-v1:0` through Bedrock Converse. DeepSeek R1 invocation in the same account was blocked as a Legacy model, so the generation profile was changed to Nova 2 Lite. Those direct calls verify model access for that CloudShell identity only; they do not establish permissions for the application's Lambda roles or verify Textract, API Gateway, queues, or the full PDF flow. The deployment script still stops before creating resources when its own credential chain is missing.
 
 `scripts/local_demo.py` gives a repeatable walkthrough of the same handlers using actual text extracted from the Transformer sample PDF. Moto supplies S3, DynamoDB, and SQS; pypdf substitutes for Textract; deterministic local vector and answer functions substitute for Bedrock. It exercises orchestration, source pages, and owner isolation without cloud credentials. It does not test AWS trigger delivery, OCR, model quality, latency, or cost. [EVALUATION_GUIDE.md](docs/EVALUATION_GUIDE.md) provides the presentation flow and precise claims.
 
@@ -54,7 +54,7 @@ flowchart TD
     Worker --> Retrieval
     Retrieval --> Titan[Embed question with Titan V2]
     Retrieval --> Chunks[Query stored document partitions]
-    Worker --> DeepSeek[Bedrock DeepSeek R1]
+    Worker --> Nova[Bedrock Nova 2 Lite]
     Worker -->|Answer and sources| Jobs
     Client -->|GET /answers/job_id| Answer
 ```
@@ -87,11 +87,11 @@ The prompt treats passages as untrusted data, requests evidence-based answers an
 
 API Gateway requires AWS IAM signatures. API resource policy rejects principals outside the stack's account. Application ownership is derived from the IAM user/role ARN; STS role sessions normalize to the same role. Users sharing a role share its document scope. Separate human accounts using one shared role require a future user-login system.
 
-Each function has scoped data/model permissions; the embedding consumer can read only the chunk table stream and the answer consumer can receive/delete from its answer queue. A template contract test checks both event-source grants. Textract has a separate SNS publication role with account/source trust conditions and a scoped PassRole grant. Bedrock generation includes the chosen inference profile, GetInferenceProfile, and its three US destination model ARNs. No full-access managed AWS service policy is attached to application handlers. Local template validation cannot establish that these permissions work in a live account.
+Each function has scoped data/model permissions; the embedding consumer can read only the chunk table stream and the answer consumer can receive/delete from its answer queue. A template contract test checks both event-source grants. Textract has a separate SNS publication role with account/source trust conditions and a scoped PassRole grant. Bedrock generation includes the Nova 2 Lite US inference profile, GetInferenceProfile, and its destination foundation-model ARNs. No full-access managed AWS service policy is attached to application handlers. Local template validation and the CloudShell model probes cannot establish that these permissions work for the deployed Lambda roles.
 
 ## Models, timing, and deployment
 
-Python runtime: 3.12. Embedding model: `amazon.titan-embed-text-v2:0`, normalized 256-dimensional vectors by default. Generation profile: `us.deepseek.r1-v1:0`, with at most 4,096 output tokens. Supported source regions are US East 1/2 and US West 2; default `us-east-1`. Cross-region routing remains within the profile's US geography. [AWS model card](https://docs.aws.amazon.com/en_en/bedrock/latest/userguide/model-card-deepseek-deepseek-r1.html) and [Titan request schema](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-titan-embed-text.html).
+Python runtime: 3.12. Embedding model: `amazon.titan-embed-text-v2:0`, normalized 256-dimensional vectors by default. Generation profile: `us.amazon.nova-2-lite-v1:0`, with at most 4,096 output tokens. This template allows `us-east-1`, `us-east-2`, and `us-west-2` as source regions; default is `us-east-1`. The chosen cross-region profile routes within the US geography. [AWS Nova 2 Lite model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-2-lite.html) and [Titan request schema](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-titan-embed-text.html).
 
 The synchronous query has a 28-second Lambda limit and a shorter model request timeout. Answer generation has a five-minute worker limit and a longer SQS visibility timeout. Queue retries can take longer than a client polling window. [API Gateway timeout reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-apigateway-method-integration.html) and [SQS/Lambda failure handling](https://docs.aws.amazon.com/lambda/latest/dg/services-sqs-errorhandling.html).
 
@@ -103,4 +103,4 @@ Logs are retained for 14 days. Failure queues have CloudWatch alarms; alarm noti
 
 ## Next acceptance gate
 
-Configure AWS account access, provision the stack, and run the sample PDF through live Textract and Bedrock. Only after that succeeds can the cloud flow be considered verified. Then evaluate answer quality, add recovery/deletion, and decide whether corpus size warrants an indexed vector store or a browser interface.
+Configure a deployment identity, provision the stack, and run the sample PDF through live Textract and Bedrock using the application's roles. Only after that succeeds can the cloud flow be considered verified. Then evaluate answer quality, add recovery/deletion, and decide whether corpus size warrants an indexed vector store or a browser interface.

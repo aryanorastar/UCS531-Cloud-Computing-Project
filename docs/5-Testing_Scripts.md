@@ -9,6 +9,14 @@ pytest -q
 
 Tests call all six handlers in order using the real sample PDF bytes, Moto-backed S3/DynamoDB/SQS, and controlled Textract/Bedrock responses. They verify state transitions, extraction pagination, atomic counters, duplicate delivery, ownership, retries, request validation, IAM signing, and forged-client-context rejection. No AWS account or live model call is used; OCR/model quality is outside this test's evidence.
 
+## Offline walkthrough
+
+```sh
+python -m scripts.local_demo
+```
+
+This extracts actual text from the included Transformer PDF with pypdf, then runs the application handlers using Moto for S3/DynamoDB/SQS and deterministic substitutes for Textract and Bedrock. It prints document states, retrieved page references, an extractive answer, and an ownership check. Use `--pdf` and `--question` to try another text-based PDF. The walkthrough is a local demonstration, not live Textract or model verification. [Lab evaluation guide](EVALUATION_GUIDE.md) gives a timed presentation script.
+
 ## Live smoke test
 
 Deploy with `python -m scripts.deploy --smoke-test`, or test an existing stack:
@@ -17,7 +25,7 @@ Deploy with `python -m scripts.deploy --smoke-test`, or test an existing stack:
 python -m scripts.smoke_test --api-url "$RAG_API_BASE_URL"
 ```
 
-The default PDF is `pdfs/Attention Is All You Need.pdf`. Override it with `--pdf` and a question with `--question`. The test uploads, waits for `READY`, checks scoped passages, waits for an answer, and checks source document/page metadata. This uses billable AWS services. Live deployment/testing is still pending credentials.
+The default PDF is `pdfs/Attention Is All You Need.pdf`. Override it with `--pdf` and a question with `--question`. The test uploads, waits for `READY`, checks scoped passages, waits for an answer, and checks source document/page metadata. This uses billable AWS services. Direct Titan V2 and Nova 2 Lite calls have succeeded from AWS CloudShell, but deployment and this end-to-end test are still pending.
 
 ## Notebook usage
 

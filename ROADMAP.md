@@ -15,16 +15,17 @@ Updated on 27 November 2026. Checked items are implemented/locally verified. Unc
 - [x] Declare Python 3.12 and pinned runtime/development dependencies.
 - [x] Provision API, private versioned S3, tables, SNS/Textract roles, stream processing, queues, logs, and alarms in SAM.
 - [x] Grant the stream and queue consumers their resource-scoped event-source read permissions; cover these contracts with a template test.
-- [x] Configure Titan V2, embedding dimensions, DeepSeek R1 US profile, and scoped model permissions.
+- [x] Configure Titan V2, embedding dimensions, Nova 2 Lite US profile, and scoped model permissions.
 - [x] Build and validate the packaged Lambda artifacts locally.
 - [x] Provide a credential/model preflight, deployment script, and real sample-PDF smoke test.
 - [x] Add GitHub CI and OIDC deployment workflows plus a one-time bootstrap template/script.
-- [ ] Configure a real default AWS profile or authorized deployment role.
+- [x] Probe Titan V2 and Nova 2 Lite directly from AWS CloudShell in `us-east-1` (27 November 2026); DeepSeek R1 was blocked as Legacy in this account.
+- [ ] Configure a local AWS profile or authorized deployment role for the actual SAM deployment. CloudShell's root-identity model probes do not verify Lambda execution-role permissions.
 - [ ] Provision AWS/GitHub OIDC deployment resources and repository variables.
 - [ ] Deploy the application and verify actual Lambda/Bedrock permissions and quotas.
 - [ ] Pass the real sample PDF upload → extraction → indexing → retrieval → answer smoke test.
 
-Acceptance: a fresh checkout provisions the backend and answers a question about the uploaded PDF using real AWS services. Local orchestration passes; live acceptance remains pending credentials.
+Acceptance: a fresh checkout provisions the backend and answers a question about the uploaded PDF using real AWS services. Local orchestration and direct CloudShell model probes pass; deployment and live upload-to-answer acceptance remain pending.
 
 ## 2. Reliable ingestion and processing status
 
@@ -36,7 +37,7 @@ Acceptance: a fresh checkout provisions the backend and answers a question about
 - [ ] Verify the 144-page sample on live AWS with all result pages processed.
 - [ ] Add a recovery/status reconciliation path for hard timeouts and exhausted delivery retries.
 - [ ] Add tested operator redrive/re-ingestion tools and operational notification destinations.
-- [ ] Configure account budgets and cost reporting after account access is available.
+- [ ] Configure account budgets and cost reporting before sustained cloud use.
 
 ## 3. Scoped API and grounded answers
 
@@ -70,4 +71,4 @@ Acceptance: a fresh checkout provisions the backend and answers a question about
 - [ ] Add document listing and owner-scoped deletion through the same API/store.
 - [ ] Add a web interface after the live backend passes its acceptance test.
 
-No live stack, model answer, deadline, cost estimate, or successful cloud deployment is implied by the completed source-code items above.
+The checked CloudShell item proves direct Titan and Nova model invocation for that identity only. It does not imply a live stack, a PDF-grounded answer, a deadline, a cost estimate, or a successful cloud deployment.
