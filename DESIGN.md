@@ -63,10 +63,19 @@ The page is an app shell: it fills the viewport and panels scroll inside themsel
 
 Motion only encodes state: marching dashes and packets on edges that are carrying work, a halo on active nodes, a sweep on indeterminate progress, a short reveal as an answer arrives, a page pill when the reader jumps. `prefers-reduced-motion` turns all of it off.
 
+## Signature interactions (v2)
+
+- **Citation → passage.** A citation chip scrolls the PDF.js reader to the cited page and paints the exact passage with a highlighter wash and its `S#` tag. The passage is found by matching the chunk text against the page's PDF.js text layer, so the evidence is shown, not just a page number.
+- **Narration.** Each real state change produces one plain-English sentence with its numbers in bold mono ("16 of 25 chunks embedded so far"). Progress updates replace the text instantly; new events type in.
+- **Chunk map.** The document drawn as its chunks: cells fill green as Titan embeds them, then light amber by cosine score after a question, with cited chunks outlined.
+- **Architecture views.** Full (AWS-style boundary: your Mac versus the `rag-pdf` stack, iconised services, particles on active edges) or Compact (one row of pills) to give the reader more room. `A` cycles Full → Compact → hidden.
+- **Command palette.** `⌘K` searches papers, questions, actions and every AWS service card.
+- **Intro.** Once per browser session: the title over a line of AWS services that draws itself, with live counts. Enter dismisses it and the panels rise in.
+
 ## Components
 
-- **Topology node**: rounded box, category stripe, title, live mono metric, status dot. States: idle, active, done, error, gated (the Textract tag). Click or Enter opens a service card with role, configuration from `template.yaml`, and the live metric.
-- **Paper row**: serif title, mono metadata, state label (Index, n/total, Ready, Failed) and a hairline progress bar while indexing.
+- **Topology node**: rounded box, tinted icon tile in the category colour, title, live mono metric, status dot. States: idle, active, done, error, gated (the Textract tag). Click or Enter opens a service card with role, configuration from `template.yaml`, and the live metric.
+- **Paper row**: a cover thumbnail rendered from page 1 (cached locally), serif title, mono metadata, state label (Index, n/total, Ready, Failed) and a hairline progress bar while indexing.
 - **Turn**: question, four-step timeline with measured timings, serif answer with citation chips, evidence ribbon, source cards with similarity bars. Retrieved but uncited sources are dimmed and labelled.
 - **Evidence ribbon**: one cell per page (pages are binned beyond 60), opacity scaled by the best cosine similarity on that page, a dot under pages the answer cites. Clicking a cell opens that page.
 - **Event stream**: timestamp, kind (HTTP, STATE, OK, ERROR), message, latency.

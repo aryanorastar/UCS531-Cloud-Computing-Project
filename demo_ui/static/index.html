@@ -8,27 +8,43 @@
     <title>Folio · Serverless paper Q&amp;A on AWS</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23ff9f43'/%3E%3Cpath d='M10 8h9l4 4v12H10z' fill='%230a0b0d'/%3E%3Ccircle cx='21' cy='21' r='3' fill='%23ff9f43'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/static/style.css" />
-    <script src="/static/app.js" defer></script>
+    <link rel="modulepreload" href="/static/vendor/pdfjs/pdf.min.mjs" />
+    <script type="module" src="/static/app.js"></script>
   </head>
   <body>
+    <div class="intro" id="intro" hidden>
+      <div class="intro-inner">
+        <svg class="intro-lines" viewBox="0 0 900 220" aria-hidden="true" id="intro-lines"></svg>
+        <div class="intro-brand">
+          <svg class="brand-mark big" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" class="brand-tile" /><path d="M10 8h9l4 4v12H10z" class="brand-page" /><path d="M19 8v4h4" class="brand-fold" /><circle cx="21" cy="21" r="3" class="brand-spark" /></svg>
+          <p class="intro-eyebrow">UCS531 Cloud Computing · live on AWS</p>
+        </div>
+        <h1 class="intro-title">Folio</h1>
+        <p class="intro-tagline">Ask a research paper a question. Watch sixteen serverless AWS components answer it, with every claim tied to the page it came from.</p>
+        <ul class="intro-facts" id="intro-facts"></ul>
+        <button class="intro-enter" id="intro-enter" type="button">Enter the console <span aria-hidden="true">→</span></button>
+        <p class="intro-hint">Press <kbd>Enter</kbd> · inside, <kbd>⌘K</kbd> opens the command palette</p>
+      </div>
+    </div>
+
     <div class="app" id="app">
       <header class="topbar">
         <a class="brand" href="/" aria-label="Folio home">
-          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
-            <rect width="32" height="32" rx="8" class="brand-tile" />
-            <path d="M10 8h9l4 4v12H10z" class="brand-page" />
-            <path d="M19 8v4h4" class="brand-fold" />
-            <circle cx="21" cy="21" r="3" class="brand-spark" />
-          </svg>
-          <span class="brand-copy"><strong>Folio</strong><small>Serverless paper Q&amp;A · UCS531 Cloud Computing</small></span>
+          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" class="brand-tile" /><path d="M10 8h9l4 4v12H10z" class="brand-page" /><path d="M19 8v4h4" class="brand-fold" /><circle cx="21" cy="21" r="3" class="brand-spark" /></svg>
+          <span class="brand-copy"><strong>Folio</strong><small>Serverless paper Q&amp;A · UCS531</small></span>
         </a>
+        <button class="palette-trigger" id="palette-trigger" type="button" aria-label="Open command palette">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.5" /><path d="M13.2 13.2L17 17" /></svg>
+          <span>Search papers, ask, or run a command</span>
+          <kbd>⌘K</kbd>
+        </button>
         <div class="topbar-meta">
           <span class="meta"><span class="meta-key">Region</span><span class="meta-value" id="meta-region">—</span></span>
           <span class="meta meta-api"><span class="meta-key">API</span><span class="meta-value" id="meta-api">—</span></span>
-          <span class="live-pill" id="live-pill" role="status" aria-live="polite"><i aria-hidden="true"></i><span id="live-text">Connecting to AWS</span></span>
-          <button class="icon-button" id="topology-toggle" type="button" aria-pressed="true" title="Show or hide the architecture (A)">
+          <span class="live-pill" id="live-pill" role="status" aria-live="polite"><i aria-hidden="true"></i><span id="live-text">Connecting</span></span>
+          <button class="icon-button" id="topology-toggle" type="button" title="Architecture: full, compact or hidden (A)">
             <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="4" cy="10" r="2" /><circle cx="16" cy="5" r="2" /><circle cx="16" cy="15" r="2" /><path d="M6 10l8-5M6 10l8 5" /></svg>
-            <span class="visually-hidden">Toggle architecture</span>
+            <span class="visually-hidden">Change architecture view</span>
           </button>
           <button class="icon-button" id="console-toggle" type="button" aria-pressed="false" title="Event stream (`)">
             <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3.5" width="15" height="13" rx="2" /><path d="M6 8l2.5 2L6 12M10.5 12.5h3.5" /></svg>
@@ -41,30 +57,30 @@
         </div>
       </header>
 
-      <section class="topology" id="topology" aria-labelledby="topology-title">
+      <section class="topology" id="topology" data-mode="full" aria-labelledby="topology-title">
         <div class="topology-head">
           <h2 id="topology-title">Live architecture</h2>
-          <p id="topology-caption">Every node reflects real state from the deployed stack. Select a service to see its role.</p>
-          <ul class="legend" aria-label="Service categories">
-            <li data-kind="client">Client</li>
-            <li data-kind="network">Networking</li>
-            <li data-kind="compute">Compute</li>
-            <li data-kind="storage">Storage</li>
-            <li data-kind="database">Database</li>
-            <li data-kind="integration">Messaging</li>
-            <li data-kind="ai">AI / ML</li>
-          </ul>
+          <div class="narration" id="narration">
+            <span class="narration-dot" aria-hidden="true"></span>
+            <p id="narration-text">Waiting for the first event from AWS…</p>
+            <span class="narration-time" id="narration-time"></span>
+          </div>
+          <div class="seg" role="group" aria-label="Architecture view">
+            <button type="button" data-mode="full" aria-pressed="true">Full</button>
+            <button type="button" data-mode="compact" aria-pressed="false">Compact</button>
+          </div>
         </div>
         <div class="topology-canvas">
-          <svg id="topology-svg" viewBox="0 0 1440 226" role="group" aria-label="Live diagram of the ingest and ask paths through AWS services"></svg>
+          <svg id="topology-svg" viewBox="0 0 1440 256" role="group" aria-label="Live diagram of the ingest and ask paths through AWS"></svg>
+          <ol class="compact-strip" id="compact-strip" aria-label="Pipeline stages"></ol>
         </div>
         <div class="node-card" id="node-card" role="dialog" aria-modal="false" aria-labelledby="node-card-title" hidden>
-            <button class="node-card-close" id="node-card-close" type="button" aria-label="Close service details">×</button>
-            <p class="node-card-kind" id="node-card-kind"></p>
-            <h3 id="node-card-title"></h3>
-            <p id="node-card-body"></p>
-            <dl id="node-card-facts"></dl>
-            <p class="node-card-live" id="node-card-live"></p>
+          <button class="node-card-close" id="node-card-close" type="button" aria-label="Close service details">×</button>
+          <div class="node-card-top"><span class="node-card-icon" id="node-card-icon"></span><p class="node-card-kind" id="node-card-kind"></p></div>
+          <h3 id="node-card-title"></h3>
+          <p id="node-card-body"></p>
+          <dl id="node-card-facts"></dl>
+          <p class="node-card-live" id="node-card-live"></p>
         </div>
       </section>
 
@@ -72,17 +88,17 @@
         <aside class="panel library" aria-labelledby="library-title">
           <header class="panel-head">
             <h2 id="library-title">Library</h2>
-            <span class="panel-hint" id="library-hint">Bundled papers</span>
+            <span class="panel-hint" id="library-hint">—</span>
           </header>
-          <ul class="paper-list" id="paper-list" aria-label="Papers"></ul>
+          <ul class="shelf" id="paper-list" aria-label="Bundled papers"></ul>
           <div class="library-section-title" id="uploads-title" hidden>Your uploads</div>
-          <ul class="paper-list" id="upload-list" aria-label="Uploaded papers" hidden></ul>
+          <ul class="shelf" id="upload-list" aria-label="Uploaded papers" hidden></ul>
           <form class="dropzone" id="dropzone" novalidate>
             <input id="pdf-input" type="file" accept=".pdf,application/pdf" />
             <label for="pdf-input">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 15v4a1 1 0 001 1h14a1 1 0 001-1v-4" /></svg>
               <strong id="drop-title">Upload a PDF</strong>
-              <span id="drop-subtitle">Drop a text-based paper · max 10 MB</span>
+              <span id="drop-subtitle">Text-based paper · up to 10 MB</span>
             </label>
           </form>
           <p class="inline-alert" id="library-error" role="alert" hidden></p>
@@ -100,7 +116,7 @@
           <header class="reader-head">
             <div class="reader-title-wrap">
               <h2 id="reader-title">No paper selected</h2>
-              <p class="reader-sub" id="reader-sub">Choose a bundled paper or upload one to begin.</p>
+              <p class="reader-sub" id="reader-sub">Choose a paper from the library to begin.</p>
             </div>
             <div class="reader-actions">
               <button class="ghost-button" id="reindex" type="button" title="Upload this bundled paper again as a new document and watch every AWS stage live" hidden>
@@ -110,7 +126,11 @@
             </div>
           </header>
           <div class="ingest" id="ingest" hidden>
-            <div class="ingest-track" role="progressbar" aria-label="Indexing progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="ingest-fill"></span></div>
+            <div class="chunkmap-head">
+              <span class="chunkmap-title" id="chunkmap-title">Chunk map</span>
+              <span class="chunkmap-legend"><i class="lg-embedded"></i>embedded <i class="lg-hit"></i>retrieved <i class="lg-cited"></i>cited</span>
+            </div>
+            <div class="chunkmap" id="chunkmap" role="img" aria-label="Chunks of this paper"></div>
             <dl class="ingest-stats">
               <div><dt>Chunks</dt><dd id="stat-chunks">—</dd></div>
               <div><dt>Extraction</dt><dd id="stat-method">—</dd></div>
@@ -120,11 +140,17 @@
             </dl>
             <p class="inline-alert" id="doc-error" role="alert" hidden></p>
           </div>
-          <div class="reader-frame" id="reader-frame">
-            <iframe id="pdf-frame" title="PDF reader" hidden></iframe>
+          <div class="viewer" id="viewer">
+            <div class="pages" id="pages" tabindex="0" aria-label="PDF pages"></div>
+            <div class="viewer-bar" id="viewer-bar" hidden>
+              <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
+              <span class="viewer-page"><b id="viewer-page">1</b> / <span id="viewer-pages">1</span></span>
+              <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+              <button type="button" id="zoom-fit" aria-label="Fit width">Fit</button>
+            </div>
             <div class="reader-empty" id="reader-empty">
-              <div class="sheet" aria-hidden="true"><span></span><span></span><span></span><span class="short"></span></div>
-              <p id="reader-empty-text">The paper opens here. Citations in an answer jump straight to their page.</p>
+              <div class="sheet" aria-hidden="true"><span></span><span></span><span class="mark"></span><span></span><span class="short"></span></div>
+              <p id="reader-empty-text">The paper opens here. Click any citation and the exact passage lights up on its page.</p>
             </div>
           </div>
         </section>
@@ -134,13 +160,13 @@
             <h2 id="ask-title">Ask the paper</h2>
             <span class="panel-hint">Retrieval-augmented · Nova 2 Lite</span>
           </header>
-          <div class="thread" id="thread" aria-live="polite">
+          <div class="thread" id="thread">
             <div class="thread-empty" id="thread-empty">
-              <p class="thread-empty-lede">Answers come only from this paper, with every claim tied to a page.</p>
+              <p class="thread-empty-lede">Answers come only from this paper, and every claim points at its page.</p>
               <ol class="how">
-                <li><span>1</span>Titan turns your question into a 256-dimension vector.</li>
-                <li><span>2</span>Cosine similarity ranks every indexed chunk.</li>
-                <li><span>3</span>SQS hands the top passages to a worker that calls Nova.</li>
+                <li><span>1</span><div><b>Embed</b>Titan turns your question into a 256-number vector.</div></li>
+                <li><span>2</span><div><b>Rank</b>Cosine similarity scores every chunk of the paper.</div></li>
+                <li><span>3</span><div><b>Answer</b>SQS hands the top five passages to a worker that asks Nova to cite them or decline.</div></li>
               </ol>
             </div>
           </div>
@@ -148,12 +174,12 @@
             <div class="suggestions" id="suggestions" aria-label="Suggested questions"></div>
             <div class="composer-box">
               <label class="visually-hidden" for="question">Your question</label>
-              <textarea id="question" rows="2" maxlength="2000" placeholder="Select a ready paper to ask a question" disabled></textarea>
+              <textarea id="question" rows="1" maxlength="2000" placeholder="Select a ready paper to ask a question" disabled></textarea>
               <button class="send" id="send" type="submit" disabled aria-label="Ask">
                 <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M10.5 5.5L15 10l-4.5 4.5" /></svg>
               </button>
             </div>
-            <div class="composer-foot"><span id="composer-hint">Enter to ask · Shift+Enter for a new line</span><span id="question-count">0 / 2000</span></div>
+            <div class="composer-foot"><span id="composer-hint">Enter to ask · Shift+Enter for a new line · / to focus</span><span id="question-count">0 / 2000</span></div>
           </form>
         </section>
       </main>
@@ -162,11 +188,25 @@
         <button class="console-bar" id="console-bar" type="button" aria-expanded="false" aria-controls="console-log">
           <span class="console-title" id="console-title"><i aria-hidden="true"></i>Event stream</span>
           <span class="console-last" id="console-last">Waiting for the first request</span>
+          <span class="console-stats" id="console-stats"></span>
           <span class="console-count" id="console-count">0 events</span>
         </button>
         <ol class="console-log" id="console-log" hidden></ol>
       </section>
     </div>
+
+    <div class="palette" id="palette" hidden>
+      <div class="palette-box" role="dialog" aria-modal="true" aria-label="Command palette">
+        <div class="palette-input">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.5" /><path d="M13.2 13.2L17 17" /></svg>
+          <input id="palette-input" type="text" placeholder="Open a paper, ask a question, or run a command" autocomplete="off" spellcheck="false" aria-controls="palette-list" />
+          <kbd>esc</kbd>
+        </div>
+        <ul class="palette-list" id="palette-list" role="listbox"></ul>
+      </div>
+    </div>
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+    <p class="visually-hidden" id="sr-live" aria-live="polite"></p>
     <div class="cite-pop" id="cite-pop" role="tooltip" hidden></div>
   </body>
 </html>

@@ -225,3 +225,29 @@ def test_paper_catalog_library_and_reader_routes(live_proxy):
     assert requests.get(f"{base}/api/documents/{DOCUMENT_ID}/pdf", timeout=3).content == b"%PDF-mine"
     assert client.calls[-1][:2] == ("GET", f"/documents/{DOCUMENT_ID}")
     assert requests.post(f"{base}/api/library", json={"document_id": "bad"}, timeout=3).status_code == 400
+
+
+def test_real_frontend_and_vendored_pdfjs_are_served_as_modules(tmp_path):
+    # Module scripts only run when served with a JavaScript MIME type.
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(FakeClient(), state_dir=tmp_path / "state"))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        page = requests.get(base, timeout=3)
+        assert '<script type="module" src="/static/app.js">' in page.text
+        for path in (
+            "/static/app.js",
+            "/static/vendor/pdfjs/pdf.min.mjs",
+            "/static/vendor/pdfjs/pdf.worker.min.mjs",
+        ):
+            response = requests.get(base + path, timeout=3)
+            assert response.status_code == 200, path
+            assert response.headers["Content-Type"].split(";")[0] in {
+                "text/javascript",
+                "application/javascript",
+            }, path
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
