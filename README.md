@@ -8,11 +8,31 @@ Upload a PDF, wait for text extraction and indexing, and ask questions answered 
 
 All six Lambda handlers, the shared client, an AWS SAM deployment, integration tests, and GitHub Actions workflows are implemented. Local tests simulate AWS storage and events and stub Textract/Bedrock responses; they do not validate a live model. The SAM template validates and packages for Python 3.12. A separate local demonstration parses text from an actual sample PDF and exercises the handlers with simulated AWS services and deterministic model substitutes.
 
-**The live text-PDF path passed.** On 27 November 2026, the deployed `rag-pdf` stack in `us-east-1` passed the full sample-PDF upload-to-answer smoke test from AWS CloudShell at code commit `a39914e`. A fresh Transformer PDF reached `READY` with **38 chunks** using `extraction_method: pypdf`; document-scoped retrieval passed; Nova 2 Lite returned a nonempty answer with source pages from that PDF. The run exercised the deployed API, S3, Lambda roles, DynamoDB/Streams, Titan, SQS, and Nova answer polling. Earlier, Textract `StartDocumentTextDetection` returned `SubscriptionRequiredException` under this account's Free plan, so **Textract OCR remains blocked and unverified**; no billing-plan change was made. The fallback reads an existing text layer and cannot OCR scanned PDFs. No AWS profile or deployment role is configured in the local evaluation workspace. The repository remains private. See [ARCHITECTURE.md](ARCHITECTURE.md) and [ROADMAP.md](ROADMAP.md) for evidence and remaining work.
+**The live text-PDF path passed.** On 27 November 2026, the deployed `rag-pdf` stack in `us-east-1` passed the full sample-PDF upload-to-answer smoke test from AWS CloudShell at code commit `a39914e`. A fresh Transformer PDF reached `READY` with **38 chunks** using `extraction_method: pypdf`; document-scoped retrieval passed; Nova 2 Lite returned a nonempty answer with source pages from that PDF. The run exercised the deployed API, S3, Lambda roles, DynamoDB/Streams, Titan, SQS, and Nova answer polling. Earlier, Textract `StartDocumentTextDetection` returned `SubscriptionRequiredException` under this account's Free plan, so **Textract OCR remains blocked and unverified**; no billing-plan change was made. The fallback reads an existing text layer and cannot OCR scanned PDFs. A temporary local AWS login profile is now configured for the browser demo; a least-privilege deployment role is not. The repository remains private. See [ARCHITECTURE.md](ARCHITECTURE.md) and [ROADMAP.md](ROADMAP.md) for evidence and remaining work.
 
 ## Lab presentation
 
 Use the [nine-slide PDF](presentation/UCS531_Lab_Evaluation.pdf) for a reliable preview or the [editable PowerPoint](presentation/UCS531_Lab_Evaluation.pptx) to present. The [five-minute evaluation guide](docs/EVALUATION_GUIDE.md) supplies the speaking order, demo commands, likely examiner questions, and the exact boundary of the live verification.
+
+## Browser demo
+
+`demo_ui/` adds a browser presentation layer over the existing AWS pipeline. An operator starts its Python server with AWS credentials and the deployed `RAG_API_BASE_URL`; the page then uploads a PDF, shows extraction/indexing status, asks a question, and displays the answer with source page numbers and excerpts. The browser calls the local server, which uses `RagClient` to sign requests to the IAM-protected API. AWS credentials are not embedded in JavaScript. This is an operator-controlled demo, with no separate public login or multi-user isolation. See [run instructions](docs/DEPLOYMENT.md) and the [five-minute UI walkthrough](docs/EVALUATION_GUIDE.md).
+
+**The live browser path passed on 27 November 2026.** From `localhost:8080` on the evaluation Mac using the temporary `ucs531-demo` AWS login profile, the sample button uploaded the Transformer PDF as document `90cedb25809042298d83b23f8eb9711e`. The UI displayed indexing at 37/38, then `READY` at 38/38 via `pypdf`. A preset question completed through Nova 2 Lite and displayed five source cards; source S4's page 5 excerpt was expanded. After the UI race fix, a second sample upload initially showed a transient AWS request error. Retrying in the same page produced document `8334410045ae4b8e945c37f0bcd49988`, again `READY` at 38/38, and another cited answer. These are live browser-to-AWS runs, not a quality benchmark. A PDF page link was rendered but opening its new tab was not independently verified.
+
+![Live browser demo showing an indexed paper and cited answer](docs/assets/browser-demo.jpg)
+
+[See the expanded page 5 source excerpt](docs/assets/source-pages.jpg).
+
+From the repository root on the evaluation Mac, with the Python environment from [Quick start](#quick-start):
+
+```sh
+aws login --profile ucs531-demo --region us-east-1
+RAG_API_BASE_URL=https://p6i206cbk1.execute-api.us-east-1.amazonaws.com/dev \
+  .venv/bin/python -m demo_ui.server --profile ucs531-demo
+```
+
+Open `http://127.0.0.1:8080`. The sample-paper button provides the fastest walkthrough. This command calls the existing live stack and can use billable AWS services; the local UI server stops with Ctrl+C.
 
 ## Full flow
 
@@ -74,6 +94,7 @@ print(result["sources"])
 | `lambda_functions/` | Six handlers, shared contracts/retrieval code, and packaged dependencies |
 | `template.yaml` | Complete SAM application infrastructure and scoped execution policies |
 | `client.py` | IAM signing, streamed uploads, readiness checks, and answer polling |
+| `demo_ui/` | Operator-run browser interface and local proxy through the existing signed client |
 | `scripts/deploy.py` | Credential/model preflight, build/deploy, stack outputs, optional live smoke test |
 | `scripts/smoke_test.py` | Real upload-to-answer verification against a deployed API |
 | `scripts/local_demo.py` | Offline, step-by-step handler demonstration using actual PDF text and simulated services |
@@ -86,6 +107,6 @@ print(result["sources"])
 
 ## Baseline limits
 
-The default limits are 25 MiB per PDF, 500 Textract pages, 2,000 chunks per document, and 2,500 chunks per search. The pypdf fallback is narrower: 10 MiB, 200 pages, and 1 million extracted characters; encrypted or image-only PDFs cannot use it. `GET /documents/{id}` reports `extraction_method` as `textract` or `pypdf` when selected. Retrieval is an exact document-partition query, not an indexed vector database. Ownership is per IAM user or role; sessions of the same role share that scope. A web interface, stronger multi-user login, document deletion, and measured answer-quality evaluation remain future work.
+The default limits are 25 MiB per PDF, 500 Textract pages, 2,000 chunks per document, and 2,500 chunks per search. The pypdf fallback is narrower: 10 MiB, 200 pages, and 1 million extracted characters; encrypted or image-only PDFs cannot use it. `GET /documents/{id}` reports `extraction_method` as `textract` or `pypdf` when selected. Retrieval is an exact document-partition query, not an indexed vector database. Ownership is per IAM user or role; sessions of the same role share that scope. The browser demo inherits its server's IAM identity; stronger multi-user login, a production-hosted interface, document deletion, and measured answer-quality evaluation remain future work.
 
 [Lab evaluation guide](docs/EVALUATION_GUIDE.md) · [Upload API](docs/2-Upload_Endpoint.md) · [Ingestion](docs/3-Data_Ingestion.md) · [Query and answer APIs](docs/4-RAG_Query_API.md) · [Notebook usage](docs/5-Testing_Scripts.md) · [Sample questions](docs/Sample_Questions.md)

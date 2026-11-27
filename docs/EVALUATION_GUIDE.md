@@ -4,9 +4,11 @@ Use this as a speaking and demo checklist. The project is a **serverless retriev
 
 ## The 30-second explanation
 
-> “I implemented an event-driven PDF question-answering system on AWS. A signed client uploads to private S3. The ingestion Lambda tries Textract, with a bounded text-layer fallback when this account reports a subscription gate. Page-aware chunks go to DynamoDB; Streams triggers Titan embeddings. A question retrieves matching passages, and an SQS worker asks Nova 2 Lite to answer with source pages. The live Transformer-paper smoke test passed through the text-PDF fallback with 38 indexed chunks. Textract OCR is still unavailable in this account.”
+> “I built a browser demo for an event-driven PDF question-answering system on AWS. I can upload a paper, watch its processing state, ask a question, and inspect the answer beside its source pages. Behind the page, an IAM-signed Python client sends requests to the deployed API. S3, Lambda, DynamoDB Streams, Titan embeddings, SQS, and Nova 2 Lite do the actual processing. The verified Transformer-paper run indexed 38 text chunks. This account's Textract subscription gate means scanned-page OCR is still unverified.”
 
 **Define RAG simply:** first *retrieve* relevant passages from the uploaded material, then *generate* an answer using those passages as context. The model is not fine-tuned on these papers.
+
+The browser page is an operator demo hosted by a local Python server. It uses that server's AWS credentials and the existing IAM-protected API; it is not a public login system or an additional cloud backend.
 
 ## Architecture to draw on the board
 
@@ -42,16 +44,20 @@ Python client ── POST /query ── Lambda ── embed question + cosine se
 
 ## Five-minute demonstration
 
-Before the evaluation, install the dependencies in a Python 3.12 virtual environment and run the commands yourself. On a machine with `uv`, use `uv venv --seed --python 3.12 .venv`, `source .venv/bin/activate`, and `uv pip install -r requirements-dev.txt`. Keep the repository root as the working directory. Have the architecture diagram and the successful live smoke output ready. The offline walkthrough is the fastest live demonstration; show the recorded AWS result for the real cloud path. Do not spend the five minutes waiting for another deployment or a long PDF extraction.
+Before the evaluation, start the browser demo with the same AWS identity used to upload the document; follow [the browser launch steps](DEPLOYMENT.md). Choose the included Transformer sample and let it reach `READY` before the timed slot. Keep that tab open with a question and source pages available. A new upload or model answer can take longer than the speaking slot, so keep the verified CloudShell smoke output and [PDF slides](../presentation/UCS531_Lab_Evaluation.pdf) available as backup.
 
 | Time | Show | Say |
 | --- | --- | --- |
-| 0:00–0:35 | The diagram above or `ARCHITECTURE.md` | State the problem, the RAG idea, and why processing is event-driven. |
-| 0:35–1:20 | `template.yaml` | Point out the API, private S3 bucket, DynamoDB tables/stream, Textract/SNS, SQS, Bedrock permissions, alarms, and six Lambda handlers. The deployed text-PDF path passed a live smoke test. |
-| 1:20–2:15 | `client.py` and `lambda_functions/get_presigned_url.py` | Explain IAM signing, direct S3 upload, 15-minute URL, server-side document identity, and status polling. |
-| 2:15–3:10 | `lambda_functions/process_document_batch.py`, `lambda_functions/shared/ingestion.py` | Explain the Textract attempt, the bounded pypdf text-layer fallback on `SubscriptionRequiredException`, page-aware chunks, and the `extraction_method` status field. |
-| 3:10–4:05 | `lambda_functions/shared/rag.py`, `lambda_functions/generate_answer.py` | Explain document-scoped cosine retrieval, asynchronous generation, and why the worker retrieves passages itself instead of trusting client-supplied text. |
-| 4:05–5:00 | Run `python -m scripts.local_demo`, then show the recorded AWS smoke result | Distinguish the offline demonstration from the live 38-chunk pypdf result. End with the OCR limitation and the next quality measurement. |
+| 0:00–0:35 | Browser demo home | State the problem and define retrieval-augmented generation: find relevant passages, then answer from them. |
+| 0:35–1:20 | Sample document card and its `READY` status | Point out that upload, extraction, chunking, and Titan indexing are asynchronous; `READY` means all expected chunks are indexed. |
+| 1:20–2:45 | Ask “How does the Transformer use attention?” | Show the queued answer state and the Nova 2 Lite result. The answer worker retrieves trusted passages itself. |
+| 2:45–3:30 | Source cards and page numbers | Expand a source card and compare its excerpt with the answer. Explain that stored page metadata comes from the indexed PDF. |
+| 3:30–4:30 | UI pipeline diagram, then `template.yaml` if asked | Trace the browser → local signed client → API Gateway → S3/Lambda/DynamoDB/Bedrock/SQS path. The UI does not contain AWS credentials. |
+| 4:30–5:00 | Extraction method and limitation label | State that the live text-PDF path passed, while Textract OCR on scans is blocked in this account and citation quality still needs broader measurement. |
+
+The source IDs, excerpts, and page metadata come from the API response. The UI builds links to the included sample PDF or browser-selected local file at the returned page number; those links do not make the private S3 object public. The live run verified a rendered link and an expanded source excerpt, but did not independently verify opening the PDF in a new tab. Use the excerpt in the timed demo.
+
+If the live browser flow is unavailable during the evaluation, run the offline command below and show the already recorded live AWS smoke result. Describe the offline output as simulated and the recorded cloud result as live.
 
 ### Offline demonstration (available without local AWS credentials)
 
@@ -90,14 +96,14 @@ The smoke test uploads the Transformer paper, waits for `READY`, prints `extract
 | Question | Short answer |
 | --- | --- |
 | Why S3 instead of DynamoDB for the PDF? | S3 is object storage for the original file, with versioning and private access. DynamoDB holds small metadata, job state, chunks, and vectors that are queried by key. |
-| Why a presigned upload URL? | The client sends PDF bytes straight to S3. The API only registers a controlled object key and signs a short-lived upload, reducing API transfer and timeout pressure. The processing Lambda still validates the stored PDF header and size. |
+| Why a presigned upload URL? | `RagClient` sends PDF bytes directly to S3 after the API registers a controlled object key and signs a short-lived upload, reducing API transfer and timeout pressure. The browser demo first hands the file to its local Python server; that server calls the same client. The processing Lambda still validates the stored PDF header and size. |
 | Why asynchronous Textract and SNS? | Extraction of a large PDF can exceed a synchronous API request. When available, Textract performs the job and notifies the result handler when it finishes. The current account's Free plan returned `SubscriptionRequiredException`, so text-layer PDFs use bounded pypdf extraction; scanned pages still need OCR. |
 | Why DynamoDB Streams? | A new pending chunk automatically triggers embedding. A transaction completes the chunk and increments the document's progress together, so duplicate events do not double-count completion. |
 | What is an embedding? | A numeric vector representing text. The question and chunks use the same Titan model and vector dimension; cosine similarity ranks the closest chunks. |
 | Why overlap chunks? | A fact at a chunk boundary can otherwise lose surrounding context. This implementation uses approximately 1,500-character chunks with 200-character overlap and retains page references. |
 | Why SQS for `/answer`? | Generation may outlast an API Gateway request. The API returns HTTP 202 and a job ID; the worker processes it with retries, and the client polls the result. |
 | How do you reduce hallucinations? | Retrieve from the selected document, pass only those passages to the model, ask for citations and abstention, and return stored source metadata. This is a mitigation; citation correctness and answer quality still need measured evaluation. |
-| What stops one caller reading another's paper? | API Gateway requires IAM SigV4. The handlers derive ownership from the AWS principal and check it on status, retrieval, and answer jobs. Sessions of the same role share one scope, so separate users need distinct principals or future login. |
+| What stops one caller reading another's paper? | API Gateway requires IAM SigV4. The handlers derive ownership from the AWS principal and check it on status, retrieval, and answer jobs. The browser demo uses its server's one IAM principal, so everyone who can reach that local demo shares its scope; do not expose it as a public multi-user app. |
 | What if an event arrives twice? | Textract starts with a deterministic token; extraction uses deterministic chunk IDs and conditional writes; embedding completion and the counter change atomically. Duplicate external model calls can still happen under concurrent delivery. |
 | What happens on failure? | Recorded failures move a document/job to `FAILED`; retries are bounded and failed deliveries can go to failure queues with alarms. Hard timeouts may leave a state in progress, so automated reconciliation remains future work. |
 | Why not a vector database now? | The initial corpus is small. A document-partition query and exact cosine ranking are simpler and auditable, with explicit search limits. Measure latency and corpus size before adding an index. |
@@ -110,7 +116,9 @@ The smoke test uploads the Transformer paper, waits for `READY`, prints `extract
 - Local tests simulate AWS data services and control Textract/Bedrock replies. They prove orchestration and many failure checks, **not** live IAM permissions, OCR accuracy, model quality, or cloud latency.
 - On 27 November 2026 in `us-east-1`, a separate AWS CloudShell session successfully invoked Titan V2 and the Nova 2 Lite US inference profile through Bedrock Converse. The earlier DeepSeek R1 invocation was blocked as Legacy. These direct probes do not exercise the deployed Lambda roles or the PDF pipeline.
 - The `rag-pdf` CloudFormation stack in `us-east-1` passed the live smoke at commit `a39914e`. Fresh document `6512893e0649491591ee0d69c68a3ff2` reached `READY` with 38 chunks via `pypdf`; retrieval returned passages; Nova 2 Lite returned a nonempty answer and sources from that document, including S1 page 2 and S2 page 5. This verifies the deployed text-PDF path for one sample.
+- On 27 November 2026, the browser demo at Mac `localhost:8080` used the temporary `ucs531-demo` AWS login profile to upload the same Transformer sample as document `90cedb25809042298d83b23f8eb9711e`. The interface showed 37/38 indexed chunks and then `READY` 38/38 via `pypdf`. A preset question completed with a Nova answer and five source cards; S4 page 5 excerpt expanded. This verifies one real browser-to-AWS flow. Browser failure states and PDF new-tab navigation were not checked in that run.
+- After the UI race fix, a second sample upload first surfaced a transient AWS request failure in the browser. The retry succeeded as document `8334410045ae4b8e945c37f0bcd49988`, reached `READY` 38/38, and returned another five-source cited answer. This verifies the visible error and retry path; asynchronous `FAILED` job states and PDF new-tab navigation remain unchecked.
 - Textract returned `SubscriptionRequiredException` under the account's Free plan. No billing-plan change was made. Textract OCR remains blocked and unverified, and a pypdf result does not show OCR on scanned pages.
-- Current design limits include 25 MiB PDFs, 500 Textract pages, 2,000 chunks per document, and 2,500 chunks per search. The pypdf fallback is capped at 10 MiB, 200 pages, and 1 million characters. It cannot OCR scanned pages. No web UI, owner-scoped deletion, measured answer-quality benchmark, or automatic recovery for every hard-timeout state is claimed.
+- Current design limits include 25 MiB PDFs, 500 Textract pages, 2,000 chunks per document, and 2,500 chunks per search. The pypdf fallback is capped at 10 MiB, 200 pages, and 1 million characters. It cannot OCR scanned pages. The browser UI is an operator-run local adapter; a public multi-user login, owner-scoped deletion, measured answer-quality benchmark, and automatic recovery for every hard-timeout state remain future work.
 
 **Good closing line:** “The live text-PDF path now works from upload through cited answer. My next checks are citation accuracy, latency, and cost across the included papers; OCR needs Textract access and its own test.”

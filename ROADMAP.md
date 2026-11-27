@@ -21,7 +21,8 @@ Updated on 27 November 2026. Checked items are implemented or verified at the sc
 - [x] Add GitHub CI and OIDC deployment workflows plus a one-time bootstrap template/script.
 - [x] Probe Titan V2 and Nova 2 Lite directly from AWS CloudShell in `us-east-1` (27 November 2026); DeepSeek R1 was blocked as Legacy in this account.
 - [x] Deploy the `rag-pdf` CloudFormation stack in `us-east-1` from AWS CloudShell; confirm the API accepts an upload.
-- [ ] Configure a local AWS profile or least-privilege deployment role for repeatable SAM deployment. CloudShell's root-identity model probes do not verify Lambda execution-role permissions.
+- [x] Configure a temporary local AWS login profile for the browser demo; verify its identity and the deployed API path.
+- [ ] Provision a least-privilege deployment role for repeatable SAM deployment. CloudShell's root-identity model probes do not verify Lambda execution-role permissions.
 - [ ] Provision AWS/GitHub OIDC deployment resources and repository variables.
 - [x] Identify the live Textract gate: `StartDocumentTextDetection` returned `SubscriptionRequiredException` under this account's Free plan; no billing-plan change was made.
 - [x] Implement a bounded pypdf text-layer fallback for that specific error, with an `extraction_method` status field and local regression tests.
@@ -74,7 +75,11 @@ Acceptance: the deployed backend answered a question about a fresh uploaded Tran
 
 - [x] Shared signed Python client with streamed uploads, explicit request timeouts, and status polling.
 - [x] Notebook uses the same client as the deployment smoke test.
+- [x] Add an operator-run browser demo over the existing IAM-signed client, with upload, processing progress, question answering, and source pages. Keep AWS credentials server-side and restrict writes to same-origin requests.
+- [x] Verify the Mac browser → local signed client → deployed API path on 27 November 2026: sample document `90cedb25809042298d83b23f8eb9711e` progressed from 37/38 to `READY` 38/38 via `pypdf`; a preset question completed with a Nova answer and five source cards, including S4 page 5 excerpt.
+- [x] Verify a recoverable browser error: a transient AWS upload request failure appeared in the UI, and retrying the sample upload reached `READY` 38/38 and another cited answer.
+- [ ] Verify asynchronous document/answer `FAILED` displays and the PDF page link's new-tab navigation. The live run checked the generated source target and expanded excerpt, not the new-tab behavior.
 - [ ] Add document listing and owner-scoped deletion through the same API/store.
-- [ ] Add a web interface after the live backend passes its acceptance test.
+- [ ] Add a production web application with per-user authentication, authorization, and suitable hosting before exposing the UI beyond an operator-controlled machine.
 
 Direct CloudShell model probes alone proved access only for that identity; the subsequent live smoke exercised the deployed Lambda roles and completed the text-PDF path for one sample. It does not establish Textract OCR, accuracy across papers, a billing-plan change, a deadline, or measured cost.
