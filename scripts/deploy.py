@@ -15,6 +15,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 ROOT = Path(__file__).resolve().parents[1]
 REGIONS = ("us-east-1", "us-east-2", "us-west-2")
 MANAGED_BY = "ucs531-cloud-rag"
+GENERATION_MODEL_ID = "us.amazon.nova-2-lite-v1:0"
 
 
 def preflight(session):
@@ -25,9 +26,9 @@ def preflight(session):
     identity = session.client("sts").get_caller_identity()
     bedrock = session.client("bedrock")
     bedrock.get_foundation_model(modelIdentifier="amazon.titan-embed-text-v2:0")
-    profile = bedrock.get_inference_profile(inferenceProfileIdentifier="us.deepseek.r1-v1:0")
+    profile = bedrock.get_inference_profile(inferenceProfileIdentifier=GENERATION_MODEL_ID)
     if profile.get("status") != "ACTIVE":
-        raise RuntimeError("The DeepSeek inference profile is not active in the selected region.")
+        raise RuntimeError("The Nova 2 Lite inference profile is not active in the selected region.")
     print(f"Deploying to AWS account {identity['Account']} in {session.region_name}", flush=True)
 
 
@@ -97,6 +98,7 @@ def main():
         "--parameter-overrides",
         f"ProjectName={args.stack_name}",
         f"StageName={args.stage}",
+        f"GenerationModelId={GENERATION_MODEL_ID}",
         "--tags",
         f"ManagedBy={MANAGED_BY}",
     ]

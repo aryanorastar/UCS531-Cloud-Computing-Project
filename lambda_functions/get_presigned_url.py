@@ -26,6 +26,7 @@ def lambda_handler(event, context):
             "document_id",
             "filename",
             "status",
+            "extraction_method",
             "total_chunks",
             "completed_chunks",
             "created_at",

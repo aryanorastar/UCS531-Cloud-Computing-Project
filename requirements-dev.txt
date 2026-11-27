@@ -5,3 +5,4 @@ ruff==0.17.0
 cfn-lint==1.53.3
 aws-sam-cli==1.168.0
 PyYAML==6.0.3
+pypdf==6.4.0

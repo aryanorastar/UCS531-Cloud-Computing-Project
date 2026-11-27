@@ -22,15 +22,15 @@ Parameters:
     AllowedValues: [256, 512, 1024]
   GenerationModelId:
     Type: String
-    Default: us.deepseek.r1-v1:0
-    AllowedValues: [us.deepseek.r1-v1:0]
+    Default: us.amazon.nova-2-lite-v1:0
+    AllowedValues: [us.amazon.nova-2-lite-v1:0]
     Description: US cross-region profile; deploy in us-east-1, us-east-2, or us-west-2
 
 Rules:
-  SupportedDeepSeekRegion:
+  SupportedNovaRegion:
     Assertions:
       - Assert: !Contains [[us-east-1, us-east-2, us-west-2], !Ref AWS::Region]
-        AssertDescription: DeepSeek R1's US inference profile requires a supported US source region.
+        AssertDescription: This deployment supports Nova 2 Lite's US profile from us-east-1, us-east-2, or us-west-2.
 
 Globals:
   Function:
@@ -246,7 +246,8 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       Handler: process_document_batch.lambda_handler
-      Timeout: 60
+      Timeout: 300
+      MemorySize: 1024
       Environment:
         Variables:
           TEXTRACT_TOPIC_ARN: !Ref TextractTopic
@@ -262,6 +263,9 @@ Resources:
             - Effect: Allow
               Action: [dynamodb:GetItem, dynamodb:UpdateItem]
               Resource: !GetAtt DocumentsTable.Arn
+            - Effect: Allow
+              Action: dynamodb:PutItem
+              Resource: !GetAtt ChunksTable.Arn
             - Effect: Allow
               Action: textract:StartDocumentTextDetection
               Resource: '*'
@@ -316,6 +320,9 @@ Resources:
             - Effect: Allow
               Action: [dynamodb:GetItem, dynamodb:UpdateItem]
               Resource: [!GetAtt ChunksTable.Arn, !GetAtt DocumentsTable.Arn]
+            - Effect: Allow
+              Action: [dynamodb:DescribeStream, dynamodb:GetRecords, dynamodb:GetShardIterator, dynamodb:ListStreams]
+              Resource: !GetAtt ChunksTable.StreamArn
             - Effect: Allow
               Action: bedrock:InvokeModel
               Resource: !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${EmbeddingModelId}'
@@ -385,16 +392,16 @@ Resources:
                 - !Sub '${DocumentsTable.Arn}/index/OwnerIndex'
                 - !GetAtt ChunksTable.Arn
             - Effect: Allow
-              Action: sqs:SendMessage
+              Action: [sqs:SendMessage, sqs:ReceiveMessage, sqs:DeleteMessage, sqs:GetQueueAttributes]
               Resource: !GetAtt AnswerQueue.Arn
             - Effect: Allow
               Action: bedrock:InvokeModel
               Resource:
                 - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${EmbeddingModelId}'
                 - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${GenerationModelId}'
-                - !Sub 'arn:${AWS::Partition}:bedrock:us-east-1::foundation-model/deepseek.r1-v1:0'
-                - !Sub 'arn:${AWS::Partition}:bedrock:us-east-2::foundation-model/deepseek.r1-v1:0'
-                - !Sub 'arn:${AWS::Partition}:bedrock:us-west-2::foundation-model/deepseek.r1-v1:0'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-east-1::foundation-model/amazon.nova-2-lite-v1:0'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-east-2::foundation-model/amazon.nova-2-lite-v1:0'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-west-2::foundation-model/amazon.nova-2-lite-v1:0'
             - Effect: Allow
               Action: bedrock:GetInferenceProfile
               Resource: !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${GenerationModelId}'

@@ -14,7 +14,8 @@ def run(api_url, *, profile=None, pdf=None, question=None):
     document_id = client.upload(pdf)
     print(f"Uploaded {pdf.name}: {document_id}", flush=True)
     document = client.wait_document(document_id)
-    print(f"Document ready: {document['completed_chunks']} indexed chunks", flush=True)
+    method = document.get("extraction_method", "unknown")
+    print(f"Document ready: {document['completed_chunks']} indexed chunks via {method}", flush=True)
     retrieval = client.query(question, document_id)
     if not retrieval["top_chunks"] or any(
         chunk["document_id"] != document_id for chunk in retrieval["top_chunks"]

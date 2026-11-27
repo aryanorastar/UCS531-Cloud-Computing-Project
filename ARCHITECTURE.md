@@ -1,6 +1,6 @@
 # Architecture and implementation status
 
-Updated on 12 October 2026. This is the implemented baseline, with live AWS verification still pending account access. [ROADMAP.md](ROADMAP.md) tracks acceptance and remaining work.
+Updated on 27 November 2026. The `rag-pdf` stack in `us-east-1` passed a live text-PDF upload-to-answer smoke test through the pypdf fallback. Textract OCR remains blocked and unverified. [ROADMAP.md](ROADMAP.md) tracks acceptance and remaining work.
 
 ## Evidence and scope
 
@@ -8,7 +8,11 @@ The imported repository contained only a notebook, manual guides, and five resea
 
 The previous deployment endpoint, stored document IDs, saved outputs, upstream Git remote, and inherited active history were removed before implementation. This project has no dependency on that deployment. The research PDF files are unchanged.
 
-No AWS profile or credentials were configured during implementation, so no live stack or real-model end-to-end run has been confirmed. The deployment script stops before creating resources when credentials are missing.
+No AWS profile or deployment role was available in the local evaluation workspace on 27 November 2026. A separate AWS CloudShell session in `us-east-1`, signed in as the account root identity, successfully invoked Titan V2 directly and invoked `us.amazon.nova-2-lite-v1:0` through Bedrock Converse. DeepSeek R1 invocation in the same account was blocked as a Legacy model, so the generation profile was changed to Nova 2 Lite. CloudFormation deployed the `rag-pdf` stack. The first live smoke uploaded the Transformer PDF through the API, then Textract `StartDocumentTextDetection` returned `SubscriptionRequiredException` under this account's Free plan. No billing-plan change was made. A bounded pypdf text-layer fallback was added; live testing exposed a missing starter permission to write chunks, which commit `a39914e` granted only on the chunks table. The next live smoke succeeded end to end using that fallback.
+
+At commit `a39914e`, `python -m scripts.deploy --smoke-test` from AWS CloudShell uploaded a fresh Transformer PDF (`6512893e0649491591ee0d69c68a3ff2`). The document reached `READY` with 38 chunks and `extraction_method: pypdf`. Document-scoped retrieval returned passages, and the queued Nova 2 Lite answer completed with a nonempty answer and sources from that document, including page 2 for S1 and page 5 for S2. The answer described stacked self-attention, an encoder-decoder structure, and multi-head attention with citation markers. This verifies the deployed text-PDF path through API Gateway, S3, Lambda, DynamoDB Streams, Titan, SQS, and Nova for that sample and identity. It is not a measured answer-quality benchmark. Textract OCR was neither enabled nor verified.
+
+`scripts/local_demo.py` gives a repeatable walkthrough of the same handlers using actual text extracted from the Transformer sample PDF. Moto supplies S3, DynamoDB, and SQS; pypdf substitutes for Textract; deterministic local vector and answer functions substitute for Bedrock. It exercises orchestration, source pages, and owner isolation without cloud credentials. It does not test AWS trigger delivery, OCR, model quality, latency, or cost. [EVALUATION_GUIDE.md](docs/EVALUATION_GUIDE.md) provides the presentation flow and precise claims.
 
 ## Ingestion pipeline
 
@@ -18,10 +22,12 @@ flowchart TD
     Register --> Documents[Document metadata table]
     Client -->|Presigned PUT| S3[Private versioned S3 bucket]
     S3 --> Starter[process_document_batch]
-    Starter --> Textract[Asynchronous Textract]
+    Starter -->|Textract available| Textract[Asynchronous Textract]
     Textract --> SNS[Completion notification]
     SNS --> Handler[handle_textract_result]
+    Starter -->|SubscriptionRequiredException| Fallback[pypdf text-layer fallback]
     Handler --> Chunks[Pending text chunks in DynamoDB]
+    Fallback --> Chunks
     Chunks --> Stream[DynamoDB Streams]
     Stream --> Embed[generate_embeddings]
     Embed --> Titan[Titan V2 embeddings]
@@ -31,11 +37,11 @@ flowchart TD
 
 The client registers a filename and exact size before upload. Object keys use the owner hash and a fresh document ID rather than user-supplied paths. A signed content-length and content-type bind the upload request. The starter verifies the actual bytes and processes an immutable S3 version; later uploads to that key do not change an already started job.
 
-Textract starts with a deterministic request token and document ID as its job tag. The result handler checks the registered job, reads every `NextToken` page, preserves PDF page references, and splits each page into 1,500-character chunks with 200-character overlap, preferring word boundaries. Deterministic chunk keys and conditional writes allow duplicate extraction notifications without overwriting completed chunks.
+When available, Textract starts with a deterministic request token and document ID as its job tag. The result handler checks the registered job and reads every `NextToken` page. On `SubscriptionRequiredException` only, the starter reads the accepted immutable S3 version with pypdf and extracts its existing text layer. This fallback is bounded to 10 MiB, 200 pages, and 1 million extracted characters. It rejects encrypted PDFs and fails visibly when no extractable text is found; it cannot OCR scanned or image-only pages. Both paths preserve page references and use the same 1,500-character chunks with 200-character overlap, preferring word boundaries. Deterministic chunk keys and conditional writes allow duplicate events without overwriting completed chunks. The document-status API exposes `extraction_method` as `textract` or `pypdf` after a method is selected.
 
 The document's total chunk count is recorded before chunks are written. Embedding events process newly inserted `PENDING` chunks; updates are filtered out to avoid recursive processing. Each completion transaction changes the chunk to `COMPLETED` and increments the document counter together. Duplicate deliveries cannot double-count progress, although concurrent duplicates can repeat an external embedding call. `READY` requires all expected chunks to be completed.
 
-Three recorded embedding failures mark the chunk/document failed; stream retries are bounded and discarded records go to a failure queue. Starter/result handlers also have asynchronous dead-letter handling. Permanent extraction errors are surfaced as document failures. A hard timeout or delivery failure may require inspecting the failure queue; automated document recovery is future work.
+Three recorded embedding failures mark the chunk/document failed; stream retries are bounded and discarded records go to a failure queue. Starter/result handlers also have asynchronous dead-letter handling. Permanent extraction errors, including a PDF without a usable text layer when OCR is unavailable, are surfaced as document failures. A hard timeout or delivery failure may require inspecting the failure queue; automated document recovery is future work.
 
 Document states: `AWAITING_UPLOAD → EXTRACTING → EMBEDDING → READY`, with `FAILED` on recorded terminal failures. A successful S3 PUT is not readiness.
 
@@ -52,7 +58,7 @@ flowchart TD
     Worker --> Retrieval
     Retrieval --> Titan[Embed question with Titan V2]
     Retrieval --> Chunks[Query stored document partitions]
-    Worker --> DeepSeek[Bedrock DeepSeek R1]
+    Worker --> Nova[Bedrock Nova 2 Lite]
     Worker -->|Answer and sources| Jobs
     Client -->|GET /answers/job_id| Answer
 ```
@@ -70,8 +76,8 @@ The prompt treats passages as untrusted data, requests evidence-based answers an
 | Handler | Triggers and responsibilities |
 | --- | --- |
 | `get_presigned_url.lambda_handler` | POST upload registration; GET document status |
-| `process_document_batch.lambda_handler` | S3 object creation; validate stored version and start Textract |
-| `handle_textract_result.lambda_handler` | SNS extraction completion; paginate, chunk, persist |
+| `process_document_batch.lambda_handler` | S3 object creation; validate stored version; start Textract or run the bounded pypdf text fallback on `SubscriptionRequiredException` |
+| `handle_textract_result.lambda_handler` | SNS Textract completion; paginate and pass page text to shared chunk persistence |
 | `generate_embeddings.lambda_handler` | Filtered DynamoDB inserts; Bedrock embeddings and atomic progress |
 | `handle_query.lambda_handler` | POST query; scoped exact retrieval |
 | `generate_answer.lambda_handler` | POST answer, GET answer status, and SQS worker |
@@ -79,26 +85,26 @@ The prompt treats passages as untrusted data, requests evidence-based answers an
 ## Storage and identity
 
 - **S3:** private, TLS-only, encrypted, versioned PDFs under `uploads/{owner_hash}/{document_id}/document.pdf`.
-- **Documents:** primary key `document_id`; owner/creation index; immutable uploaded version, job correlation, counts, status, and failure message.
+- **Documents:** primary key `document_id`; owner/creation index; immutable uploaded version, extraction method, optional Textract job correlation, counts, status, and failure message.
 - **Chunks:** partition key `document_id`, sort key `chunk_id`; text, page/index metadata, status, vector, embedding model/dimensions, and retry count.
 - **Answer jobs:** primary key `job_id`; owner, question/scope, status, lease, result, and 24-hour expiry.
 
 API Gateway requires AWS IAM signatures. API resource policy rejects principals outside the stack's account. Application ownership is derived from the IAM user/role ARN; STS role sessions normalize to the same role. Users sharing a role share its document scope. Separate human accounts using one shared role require a future user-login system.
 
-Each function has scoped data/model permissions; Textract has a separate SNS publication role with account/source trust conditions and a scoped PassRole grant. Bedrock generation includes the chosen inference profile, GetInferenceProfile, and its three US destination model ARNs. No full-access managed AWS service policy is attached to application handlers.
+Each function has scoped data/model permissions; the embedding consumer can read only the chunk table stream and the answer consumer can receive/delete from its answer queue. A template contract test checks both event-source grants. Textract has a separate SNS publication role with account/source trust conditions and a scoped PassRole grant. Bedrock generation includes the Nova 2 Lite US inference profile, GetInferenceProfile, and its destination foundation-model ARNs. No full-access managed AWS service policy is attached to application handlers. Local template validation and the CloudShell model probes cannot establish that these permissions work for the deployed Lambda roles.
 
 ## Models, timing, and deployment
 
-Python runtime: 3.12. Embedding model: `amazon.titan-embed-text-v2:0`, normalized 256-dimensional vectors by default. Generation profile: `us.deepseek.r1-v1:0`, with at most 4,096 output tokens. Supported source regions are US East 1/2 and US West 2; default `us-east-1`. Cross-region routing remains within the profile's US geography. [AWS model card](https://docs.aws.amazon.com/en_en/bedrock/latest/userguide/model-card-deepseek-deepseek-r1.html) and [Titan request schema](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-titan-embed-text.html).
+Python runtime: 3.12. Embedding model: `amazon.titan-embed-text-v2:0`, normalized 256-dimensional vectors by default. Generation profile: `us.amazon.nova-2-lite-v1:0`, with at most 4,096 output tokens. This template allows `us-east-1`, `us-east-2`, and `us-west-2` as source regions; default is `us-east-1`. The chosen cross-region profile routes within the US geography. [AWS Nova 2 Lite model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-2-lite.html) and [Titan request schema](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-titan-embed-text.html).
 
 The synchronous query has a 28-second Lambda limit and a shorter model request timeout. Answer generation has a five-minute worker limit and a longer SQS visibility timeout. Queue retries can take longer than a client polling window. [API Gateway timeout reference](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-properties-apigateway-method-integration.html) and [SQS/Lambda failure handling](https://docs.aws.amazon.com/lambda/latest/dg/services-sqs-errorhandling.html).
 
-`template.yaml` provisions all application resources. `scripts/deploy.py` verifies credentials/model definitions, validates/builds SAM, deploys the stack, exports outputs, and optionally invokes the real smoke test. Preflight does not prove Lambda model permissions; the real smoke test does.
+`template.yaml` provisions all application resources. `scripts/deploy.py` verifies credentials/model definitions, validates/builds SAM, deploys the stack, exports outputs, and optionally invokes the real smoke test. The live smoke passed for a text-based PDF after the fallback and scoped permission fix. This exercises the application's Lambda model permissions on that path. Preflight and direct model probes alone would not have established them.
 
-GitHub CI tests, lints, validates, and packages on pushes/PRs. Deployment uses short-lived GitHub OIDC credentials and a CloudFormation execution role from `infra/github-oidc.yaml`. The bootstrap script can configure repository variables. Manual deployment is available; automatic deployment on main is opt-in with `AUTO_DEPLOY=true`. AWS bootstrap/roles have not yet been provisioned.
+GitHub CI tests, lints, validates, and packages on pushes/PRs. The optional GitHub deployment workflow is designed to use short-lived OIDC credentials and a CloudFormation execution role from `infra/github-oidc.yaml`; its bootstrap resources and repository variables have not yet been provisioned. The verified stack was deployed manually from AWS CloudShell. Automatic deployment on main remains opt-in with `AUTO_DEPLOY=true`.
 
 Logs are retained for 14 days. Failure queues have CloudWatch alarms; alarm notification destinations and account budgets are not configured. PDFs and document/chunk tables are retained on stack deletion. See [deployment instructions](docs/DEPLOYMENT.md) for setup, failure investigation, and retention behavior.
 
 ## Next acceptance gate
 
-Configure AWS account access, provision the stack, and run the sample PDF through live Textract and Bedrock. Only after that succeeds can the cloud flow be considered verified. Then evaluate answer quality, add recovery/deletion, and decide whether corpus size warrants an indexed vector store or a browser interface.
+The live text-PDF cloud path is verified for the Transformer sample. Next, evaluate answer and citation quality across the included papers, including unanswerable questions, and measure latency and cost. Textract OCR requires separate account access and an actual scanned-PDF test; the Free-plan `SubscriptionRequiredException` does not prove OCR works. Recovery/deletion and a possible indexed vector store or browser interface remain follow-up work.

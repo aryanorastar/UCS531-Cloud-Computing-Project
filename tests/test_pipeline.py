@@ -1,5 +1,7 @@
 import base64
 import json
+from io import BytesIO
+from unittest.mock import Mock
 from urllib.parse import parse_qs, urlparse
 
 import generate_answer
@@ -11,7 +13,9 @@ import process_document_batch
 import pytest
 from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.types import TypeSerializer
-from shared import common, rag
+from botocore.exceptions import ClientError
+from pypdf import PdfWriter
+from shared import common, ingestion, rag
 
 ARYAN = "arn:aws:iam::123456789012:user/aryan"
 OTHER = "arn:aws:iam::123456789012:user/another-user"
@@ -110,6 +114,7 @@ def test_full_sample_pdf_upload_to_answer(aws):
     assert generate_embeddings.lambda_handler(records, None) == {"batchItemFailures": []}
     document = decoded(get_presigned_url.lambda_handler(event(method="GET", document_id=document_id), None))
     assert document["status"] == "READY"
+    assert document["extraction_method"] == "textract"
     assert document["completed_chunks"] == document["total_chunks"] == 2
     retrieval = decoded(
         handle_query.lambda_handler(
@@ -155,6 +160,191 @@ def test_full_sample_pdf_upload_to_answer(aws):
     assert common.get_document(document_id)["completed_chunks"] == 2
 
 
+def test_text_pdf_fallback_uses_accepted_version_and_survives_duplicate_events(aws):
+    aws["textract"].start_error = "SubscriptionRequiredException"
+    registration, s3_event = upload(aws)
+    document_id = registration["document_id"]
+    original = common.get_document(document_id)
+    aws["s3"].put_object(
+        Bucket="test-rag-documents",
+        Key=original["object_key"],
+        Body=b"not the accepted PDF version",
+        ContentType="application/pdf",
+    )
+
+    process_document_batch.lambda_handler(s3_event, None)
+    document = decoded(get_presigned_url.lambda_handler(event(method="GET", document_id=document_id), None))
+    assert document["status"] == "EMBEDDING"
+    assert document["extraction_method"] == "pypdf"
+    assert document["total_chunks"] > 1
+    first_chunks = stream(document_id)
+    assert any("Transformer" in item["dynamodb"]["NewImage"]["text"]["S"] for item in first_chunks["Records"])
+
+    process_document_batch.lambda_handler(s3_event, None)
+    assert len(stream(document_id)["Records"]) == document["total_chunks"]
+    assert generate_embeddings.lambda_handler(first_chunks, None) == {"batchItemFailures": []}
+    ready_document = decoded(
+        get_presigned_url.lambda_handler(event(method="GET", document_id=document_id), None)
+    )
+    assert ready_document["status"] == "READY"
+    assert ready_document["completed_chunks"] == ready_document["total_chunks"]
+    process_document_batch.lambda_handler(s3_event, None)
+    assert (
+        decoded(get_presigned_url.lambda_handler(event(method="GET", document_id=document_id), None))
+        == ready_document
+    )
+    decoded(
+        get_presigned_url.lambda_handler(event(method="GET", arn=OTHER, document_id=document_id), None), 404
+    )
+    retrieval = decoded(
+        handle_query.lambda_handler(
+            event({"question": "Transformer attention", "document_id": document_id}), None
+        )
+    )
+    assert retrieval["top_chunks"]
+    assert all(chunk["pages"] for chunk in retrieval["top_chunks"])
+
+
+def test_text_pdf_fallback_fails_visibly_when_no_text_layer_exists(aws):
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    pdf = BytesIO()
+    writer.write(pdf)
+    aws["textract"].start_error = "SubscriptionRequiredException"
+    registration, s3_event = upload(aws, payload=pdf.getvalue())
+
+    process_document_batch.lambda_handler(s3_event, None)
+
+    document = decoded(
+        get_presigned_url.lambda_handler(event(method="GET", document_id=registration["document_id"]), None)
+    )
+    assert document["status"] == "FAILED"
+    assert document["extraction_method"] == "pypdf"
+    assert "No extractable text" in document["error_message"]
+    assert common.table("chunks").scan()["Count"] == 0
+    process_document_batch.lambda_handler(s3_event, None)
+    assert len(aws["textract"].starts) == 1
+
+
+def test_text_pdf_fallback_marks_unexpected_parser_error_failed(aws, monkeypatch):
+    aws["textract"].start_error = "SubscriptionRequiredException"
+    monkeypatch.setattr(
+        process_document_batch,
+        "PdfReader",
+        Mock(side_effect=ValueError("malformed internal PDF object")),
+    )
+    registration, s3_event = upload(aws)
+
+    process_document_batch.lambda_handler(s3_event, None)
+
+    document = decoded(
+        get_presigned_url.lambda_handler(event(method="GET", document_id=registration["document_id"]), None)
+    )
+    assert document["status"] == "FAILED"
+    assert document["extraction_method"] == "pypdf"
+    assert "PDF text extraction failed" in document["error_message"]
+    assert "malformed internal PDF object" not in document["error_message"]
+    assert common.table("chunks").scan()["Count"] == 0
+
+
+def test_text_pdf_fallback_resumes_after_partial_chunk_write(aws, monkeypatch):
+    aws["textract"].start_error = "SubscriptionRequiredException"
+    registration, s3_event = upload(aws)
+    document_id = registration["document_id"]
+    real_table = ingestion.table
+    writes = 0
+
+    class FailOneChunkWrite:
+        def __init__(self, actual):
+            self.actual = actual
+
+        def put_item(self, **kwargs):
+            nonlocal writes
+            writes += 1
+            if writes == 2:
+                raise ClientError(
+                    {"Error": {"Code": "ProvisionedThroughputExceededException", "Message": "retry"}},
+                    "PutItem",
+                )
+            return self.actual.put_item(**kwargs)
+
+    def flaky_table(kind):
+        actual = real_table(kind)
+        return FailOneChunkWrite(actual) if kind == "chunks" else actual
+
+    monkeypatch.setattr(ingestion, "table", flaky_table)
+    with pytest.raises(ClientError):
+        process_document_batch.lambda_handler(s3_event, None)
+    document = common.get_document(document_id)
+    assert document["status"] == "EMBEDDING"
+    assert document["extraction_method"] == "pypdf"
+    assert len(stream(document_id)["Records"]) == 1
+
+    process_document_batch.lambda_handler(s3_event, None)
+    document = common.get_document(document_id)
+    records = stream(document_id)
+    assert len(records["Records"]) == document["total_chunks"]
+    assert len(aws["textract"].starts) == 1
+    assert generate_embeddings.lambda_handler(records, None) == {"batchItemFailures": []}
+    assert common.get_document(document_id)["status"] == "READY"
+
+
+def test_text_pdf_fallback_rejects_encrypted_pdf(aws):
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    writer.encrypt("secret")
+    pdf = BytesIO()
+    writer.write(pdf)
+    aws["textract"].start_error = "SubscriptionRequiredException"
+    registration, s3_event = upload(aws, payload=pdf.getvalue())
+
+    process_document_batch.lambda_handler(s3_event, None)
+
+    document = common.get_document(registration["document_id"])
+    assert document["status"] == "FAILED"
+    assert document["extraction_method"] == "pypdf"
+    assert "Password-protected" in document["error_message"]
+    assert common.table("chunks").scan()["Count"] == 0
+
+
+def test_text_fallback_does_not_mask_unrelated_textract_errors(aws):
+    aws["textract"].start_error = "AccessDeniedException"
+    registration, s3_event = upload(aws)
+
+    process_document_batch.lambda_handler(s3_event, None)
+
+    document = decoded(
+        get_presigned_url.lambda_handler(event(method="GET", document_id=registration["document_id"]), None)
+    )
+    assert document["status"] == "FAILED"
+    assert "extraction_method" not in document
+    assert common.table("chunks").scan()["Count"] == 0
+
+
+@pytest.mark.parametrize(
+    ("limit", "value", "error"),
+    [
+        ("FALLBACK_MAX_BYTES", 1000, "10 MiB"),
+        ("FALLBACK_MAX_PAGES", 1, "200-page"),
+        ("FALLBACK_MAX_CHARACTERS", 100, "1M-character"),
+    ],
+)
+def test_text_fallback_resource_limits_fail_visibly(aws, monkeypatch, limit, value, error):
+    aws["textract"].start_error = "SubscriptionRequiredException"
+    monkeypatch.setattr(process_document_batch, limit, value)
+    registration, s3_event = upload(aws)
+
+    process_document_batch.lambda_handler(s3_event, None)
+
+    document = decoded(
+        get_presigned_url.lambda_handler(event(method="GET", document_id=registration["document_id"]), None)
+    )
+    assert document["status"] == "FAILED"
+    assert document["extraction_method"] == "pypdf"
+    assert error in document["error_message"]
+    assert common.table("chunks").scan()["Count"] == 0
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -179,6 +369,8 @@ def test_invalid_json_and_authentication(aws):
     request["body"] = base64.b64encode(b'{"filename":"a.pdf","size_bytes":10}').decode()
     request["isBase64Encoded"] = True
     decoded(get_presigned_url.lambda_handler(request, None))
+    request["body"] = "!not-base64!"
+    decoded(get_presigned_url.lambda_handler(request, None), 400)
 
 
 def test_assumed_role_ownership_stable_across_sessions():

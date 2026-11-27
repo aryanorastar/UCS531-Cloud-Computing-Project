@@ -41,6 +41,7 @@ class Textract:
     def __init__(self):
         self.starts = []
         self.results = []
+        self.start_error = None
         self.pages = [
             {
                 "JobStatus": "SUCCEEDED",
@@ -69,6 +70,13 @@ class Textract:
 
     def start_document_text_detection(self, **request):
         self.starts.append(request)
+        if self.start_error:
+            from botocore.exceptions import ClientError
+
+            raise ClientError(
+                {"Error": {"Code": self.start_error, "Message": "simulated Textract error"}},
+                "StartDocumentTextDetection",
+            )
         return {"JobId": "job-" + request["ClientRequestToken"][:32]}
 
     def get_document_text_detection(self, **request):
@@ -93,7 +101,7 @@ def aws(monkeypatch):
         "TEXTRACT_ROLE_ARN": "arn:aws:iam::123456789012:role/textract",
         "EMBEDDING_DIMENSIONS": "256",
         "EMBEDDING_MODEL_ID": "amazon.titan-embed-text-v2:0",
-        "GENERATION_MODEL_ID": "us.deepseek.r1-v1:0",
+        "GENERATION_MODEL_ID": "us.amazon.nova-2-lite-v1:0",
     }.items():
         monkeypatch.setenv(key, value)
     common.client.cache_clear()
