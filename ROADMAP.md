@@ -1,6 +1,6 @@
 # Implementation checklist
 
-Updated on 27 November 2026. Checked items are implemented/locally verified. Unchecked acceptance steps remain outstanding. See [ARCHITECTURE.md](ARCHITECTURE.md) for design and limitations.
+Updated on 27 November 2026. Checked items are implemented or verified at the scope stated on each line; unchecked work remains outstanding. See [ARCHITECTURE.md](ARCHITECTURE.md) for design and evidence limits.
 
 ## Completed foundation
 
@@ -20,12 +20,15 @@ Updated on 27 November 2026. Checked items are implemented/locally verified. Unc
 - [x] Provide a credential/model preflight, deployment script, and real sample-PDF smoke test.
 - [x] Add GitHub CI and OIDC deployment workflows plus a one-time bootstrap template/script.
 - [x] Probe Titan V2 and Nova 2 Lite directly from AWS CloudShell in `us-east-1` (27 November 2026); DeepSeek R1 was blocked as Legacy in this account.
-- [ ] Configure a local AWS profile or authorized deployment role for the actual SAM deployment. CloudShell's root-identity model probes do not verify Lambda execution-role permissions.
+- [x] Deploy the `rag-pdf` CloudFormation stack in `us-east-1` from AWS CloudShell; confirm the API accepts an upload.
+- [ ] Configure a local AWS profile or least-privilege deployment role for repeatable SAM deployment. CloudShell's root-identity model probes do not verify Lambda execution-role permissions.
 - [ ] Provision AWS/GitHub OIDC deployment resources and repository variables.
-- [ ] Deploy the application and verify actual Lambda/Bedrock permissions and quotas.
-- [ ] Pass the real sample PDF upload → extraction → indexing → retrieval → answer smoke test.
+- [x] Identify the live Textract gate: `StartDocumentTextDetection` returned `SubscriptionRequiredException` under this account's Free plan; no billing-plan change was made.
+- [x] Implement a bounded pypdf text-layer fallback for that specific error, with an `extraction_method` status field and local regression tests.
+- [x] Redeploy the fallback and pass the real Transformer PDF upload → pypdf extraction → indexing → retrieval → Nova answer smoke test at commit `a39914e` in `us-east-1` (38 `READY` chunks with source pages).
+- [x] Verify the application's Lambda/Bedrock permissions for the exercised text-PDF path through that full smoke test; first fix the fallback starter's missing chunk-table `PutItem` grant with a scoped permission.
 
-Acceptance: a fresh checkout provisions the backend and answers a question about the uploaded PDF using real AWS services. Local orchestration and direct CloudShell model probes pass; deployment and live upload-to-answer acceptance remain pending.
+Acceptance: the deployed backend answered a question about a fresh uploaded Transformer PDF using the real API, storage, Lambda, DynamoDB Streams, Titan, SQS, and Nova services. The live sample used `extraction_method: pypdf`; it verifies the text-PDF path, not Textract OCR or answer quality across the corpus. A fresh checkout's repeatable least-privilege deployment still needs separate verification.
 
 ## 2. Reliable ingestion and processing status
 
@@ -34,7 +37,9 @@ Acceptance: a fresh checkout provisions the backend and answers a question about
 - [x] Job correlation, Textract/DynamoDB pagination, deterministic chunks, overlapping page-aware text.
 - [x] Conditional writes and atomic embedding/counter completion; duplicate-event regression checks.
 - [x] Bounded embedding attempts, asynchronous failure queues, failure messages, log retention, and queue alarms.
-- [ ] Verify the 144-page sample on live AWS with all result pages processed.
+- [x] Share page-aware chunk persistence between Textract results and the pypdf fallback; cap fallback at 10 MiB, 200 pages, and 1 million characters.
+- [ ] Verify the 144-page sample and complete result pagination through live Textract when account access permits; the text-layer fallback has separate 200-page and 1 million-character caps.
+- [ ] Verify Textract OCR separately when account access permits it; scanned/image-only PDFs are outside the pypdf fallback.
 - [ ] Add a recovery/status reconciliation path for hard timeouts and exhausted delivery retries.
 - [ ] Add tested operator redrive/re-ingestion tools and operational notification destinations.
 - [ ] Configure account budgets and cost reporting before sustained cloud use.
@@ -57,9 +62,10 @@ Acceptance: a fresh checkout provisions the backend and answers a question about
 - [x] Integration tests run every handler in sequence using the actual sample PDF bytes, simulated AWS data services, and controlled OCR/model responses.
 - [x] Provide a local walkthrough that extracts actual text from the sample PDF and runs the same handlers with simulated AWS services and deterministic model substitutes.
 - [x] Test malformed requests, unsigned callers, ownership, status, pagination, duplicate events, retry exhaustion, forged client context, and signing.
+- [x] Test the SubscriptionRequired fallback, immutable-version handling, visible failure on no text, resource caps, and non-fallback errors.
 - [x] Return HTTP 400 for malformed base64 API bodies.
 - [x] Keep notebook outputs and local configuration/credentials out of commits.
-- [ ] Run the live AWS smoke test; simulated tests do not measure OCR/AI quality.
+- [x] Pass the live AWS smoke test through the deployed text-PDF fallback using the actual Transformer PDF; record 38 indexed chunks, document-scoped passages, and a Nova answer with page-linked sources.
 - [ ] Build an expected-answer/source evaluation set with unanswerable and cross-document questions.
 - [ ] Measure accuracy, citation validity, latency, and cost across all sample papers.
 - [ ] Add reranking or a dedicated vector index only when measurements justify it.
@@ -71,4 +77,4 @@ Acceptance: a fresh checkout provisions the backend and answers a question about
 - [ ] Add document listing and owner-scoped deletion through the same API/store.
 - [ ] Add a web interface after the live backend passes its acceptance test.
 
-The checked CloudShell item proves direct Titan and Nova model invocation for that identity only. It does not imply a live stack, a PDF-grounded answer, a deadline, a cost estimate, or a successful cloud deployment.
+Direct CloudShell model probes alone proved access only for that identity; the subsequent live smoke exercised the deployed Lambda roles and completed the text-PDF path for one sample. It does not establish Textract OCR, accuracy across papers, a billing-plan change, a deadline, or measured cost.

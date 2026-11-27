@@ -1,6 +1,6 @@
 # Automated deployment
 
-The source implements the full pipeline in `template.yaml`. Direct Titan V2 and Nova 2 Lite calls succeeded from AWS CloudShell in `us-east-1` on 27 November 2026; the stack is not deployed and the PDF smoke test has not run. Tests and SAM packaging work without an AWS account; provisioning and the smoke test require an authorized AWS deployment identity.
+The source implements the full pipeline in `template.yaml`. On 27 November 2026, the `rag-pdf` stack in `us-east-1` passed the upload-to-answer smoke test at commit `a39914e` through its bounded text-PDF fallback. A fresh Transformer PDF reached `READY` with 38 chunks via `pypdf`; retrieval passed; Nova 2 Lite returned an answer and source pages. Earlier, Textract `StartDocumentTextDetection` returned `SubscriptionRequiredException` under this account's Free plan. No billing-plan change was made. Textract OCR remains blocked and unverified. Tests and SAM packaging also work without an AWS account.
 
 ## Local environment
 
@@ -36,7 +36,9 @@ python -m scripts.deploy --profile my-aws-profile --region us-east-1 --smoke-tes
 
 The script runs preflight, validates/builds SAM, and provisions the whole application without manual console wiring. Existing stack names must carry this project's ManagedBy tag; an unrelated stack is rejected rather than overwritten. CloudFormation exports the API URL, bucket, tables, failure queue URLs, and the API invocation ARN. These are saved in ignored `deployment.json`. Configure `RAG_API_BASE_URL` to the `ApiBaseUrl` output, including `/dev`, for the notebook/client.
 
-The `--smoke-test` option uploads the actual Transformer PDF, polls for `READY`, checks document-scoped retrieval, queues a question, and polls for an answer/source result. It performs real Textract and model calls and incurs AWS usage. It verifies orchestration/source metadata, not a benchmark of factual answer quality. Omit it to deploy without running those calls.
+The observed `rag-pdf` `ApiBaseUrl` on 27 November 2026 was `https://p6i206cbk1.execute-api.us-east-1.amazonaws.com/dev`. The API requires IAM-signed requests; use the current stack output if the stack is recreated. AWS CloudShell ran `python -m scripts.deploy --smoke-test` against code commit `a39914e` and completed the text-PDF path. The resulting document was `6512893e0649491591ee0d69c68a3ff2`, with 38 indexed chunks via `pypdf` and an answer containing source pages.
+
+The `--smoke-test` option uploads the actual Transformer PDF, polls for `READY`, checks document-scoped retrieval, queues a question, and polls for an answer/source result. It first attempts Textract. If the service returns `SubscriptionRequiredException`, the starter uses pypdf to read an existing PDF text layer from the accepted S3 version. That path performs no OCR and reports `extraction_method: pypdf`; normal Textract processing reports `textract`. The smoke test prints the selected method. It uses billable AWS resources and model calls. The successful run at commit `a39914e` verifies the text-PDF cloud path and source metadata for one paper, not OCR or a benchmark of factual answer quality. Omit it to deploy without running those calls.
 
 ## GitHub deployment with OIDC
 
@@ -84,6 +86,12 @@ IAM signatures authenticate API calls. Give a non-admin client `execute-api:Invo
 4. Check Textract/S3 access, Bedrock profile/model access, and invocation quotas. The answer worker may wait for SQS visibility before retrying.
 
 A permanently failed document is not automatically repaired; re-upload it under a new document ID after fixing the cause. A hard timeout/delivery failure can leave status in progress until retry/expiry. These recovery gaps are tracked in ROADMAP.md. Queue alarms are created, but no email/SNS alarm-notification destination or account budget is configured.
+
+### Textract subscription gate and text-PDF fallback
+
+In the initial live run in `us-east-1`, Textract returned `SubscriptionRequiredException` after the PDF upload. The source catches **only that error** and falls back to pypdf text-layer extraction. Other Textract permission or document errors still fail visibly. Fallback limits are 10 MiB, 200 pages, and 1 million extracted characters. Encrypted PDFs and scanned/image-only PDFs need Textract OCR and cannot complete through this fallback. `GET /documents/{document_id}` exposes `extraction_method` once selected, so verify which path actually processed a document. Do not describe a fallback result as an OCR result. No billing-plan change was made to enable Textract.
+
+The first fallback deployment also exposed a missing chunk-table write permission for the starter Lambda. Commit `a39914e` added a scoped `dynamodb:PutItem` grant on that table. The subsequent smoke passed. This is evidence for the exercised text-PDF path, not for Textract OCR or a different AWS principal.
 
 ## Teardown and data preservation
 
