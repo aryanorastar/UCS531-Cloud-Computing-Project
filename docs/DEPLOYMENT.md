@@ -58,7 +58,7 @@ export RAG_API_BASE_URL=https://p6i206cbk1.execute-api.us-east-1.amazonaws.com/d
 .venv/bin/python -m demo_ui.server --profile ucs531-demo --api-url "$RAG_API_BASE_URL"
 ```
 
-Open `http://127.0.0.1:8080` in the same Mac browser. Choose the included Transformer sample or upload a text-based PDF of at most 10 MiB. Wait for `READY`, ask a question, and inspect the answer and its source page cards. A new upload and model answer can take several minutes and use billable AWS services. Keep the page open during the lab; stop the local server with Ctrl+C afterward. Stopping the UI does not delete the AWS stack or its retained PDFs.
+Open `http://127.0.0.1:8080` in the same Mac browser. Pick a bundled paper in the library (or upload a text-based PDF of at most 10 MiB); already indexed papers open immediately. The server keeps its list of indexed documents and local copies of uploaded PDFs in the ignored `.demo/` folder. Wait for `READY`, ask a question, and inspect the answer and its source page cards. A new upload and model answer can take several minutes and use billable AWS services. Keep the page open during the lab; stop the local server with Ctrl+C afterward. Stopping the UI does not delete the AWS stack or its retained PDFs.
 
 The 27 November 2026 live browser run followed this path: sample upload `90cedb25809042298d83b23f8eb9711e` reached `READY` at 38/38 pypdf chunks after a visible 37/38 intermediate state, then a preset question returned a Nova answer with five source cards. S4 page 5 excerpt expanded. Opening the PDF page link in a new tab was not independently checked.
 

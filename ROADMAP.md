@@ -1,6 +1,6 @@
 # Implementation checklist
 
-Updated on 27 November 2026. Checked items are implemented or verified at the scope stated on each line; unchecked work remains outstanding. See [ARCHITECTURE.md](ARCHITECTURE.md) for design and evidence limits.
+Updated on 27 November 2026 (late). Checked items are implemented or verified at the scope stated on each line; unchecked work remains outstanding. See [ARCHITECTURE.md](ARCHITECTURE.md) for design and evidence limits.
 
 ## Completed foundation
 
@@ -78,7 +78,10 @@ Acceptance: the deployed backend answered a question about a fresh uploaded Tran
 - [x] Add an operator-run browser demo over the existing IAM-signed client, with upload, processing progress, question answering, and source pages. Keep AWS credentials server-side and restrict writes to same-origin requests.
 - [x] Verify the Mac browser → local signed client → deployed API path on 27 November 2026: sample document `90cedb25809042298d83b23f8eb9711e` progressed from 37/38 to `READY` 38/38 via `pypdf`; a preset question completed with a Nova answer and five source cards, including S4 page 5 excerpt.
 - [x] Verify a recoverable browser error: a transient AWS upload request failure appeared in the UI, and retrying the sample upload reached `READY` 38/38 and another cited answer.
-- [ ] Verify asynchronous document/answer `FAILED` displays and the PDF page link's new-tab navigation. The live run checked the generated source target and expanded excerpt, not the new-tab behavior.
+- [x] Redesign the browser demo as Folio: live two-lane architecture driven by real states, service cards, library of all bundled papers, embedded PDF reader that jumps to cited pages, timed Retrieve/Queue/Generate steps, evidence ribbon with similarity scores, cited-versus-retrieved sources, event stream, light/dark themes, keyboard shortcuts.
+- [x] Verify Folio live on 27 November 2026: all five bundled papers `READY` (25–719 chunks), live GAN re-index in 10–13 s, cited answer in 7.3 s, off-topic question declined.
+- [x] Fix large uploads on slow links: the S3 PUT used a 5 s connect timeout that urllib3 also applies to body writes, so the 8.6 MB survey failed; it now uses 60 s.
+- [ ] Verify asynchronous document/answer `FAILED` displays in the browser. The live run checked the generated source target and expanded excerpt, not the new-tab behavior.
 - [ ] Add document listing and owner-scoped deletion through the same API/store.
 - [ ] Add a production web application with per-user authentication, authorization, and suitable hosting before exposing the UI beyond an operator-controlled machine.
 

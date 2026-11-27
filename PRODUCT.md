@@ -8,7 +8,7 @@ web
 
 ## Stack
 
-Delegated implementation choice for the lab demo: plain HTML, CSS, and JavaScript served by a small Python standard-library process. The process uses the existing IAM-signed `RagClient` and AWS credential chain. This keeps AWS credentials out of browser code and avoids a frontend build step during the lab.
+Folio, the lab demo interface: plain HTML, CSS, and JavaScript (no build step, no external fonts or libraries) served by a small Python standard-library process. The process uses the existing IAM-signed `RagClient` and AWS credential chain. This keeps AWS credentials out of browser code and avoids a frontend build step during the lab.
 
 ## Users
 
@@ -16,7 +16,7 @@ Aryan is the operator during a UCS531 lab evaluation. The teacher watches the li
 
 ## Product Purpose
 
-Make the deployed serverless PDF question-answering pipeline visible and usable: upload a research PDF, watch extraction and indexing reach `READY`, ask a question, and inspect the answer alongside page-linked source passages.
+Make the deployed serverless PDF question-answering pipeline visible and usable: pick or upload a research PDF, watch each AWS service light up as extraction and indexing reach `READY`, ask a question, and inspect the answer beside the cited page of the PDF, the retrieved passages and their similarity scores.
 
 ## Operating Context
 
@@ -34,6 +34,7 @@ The backend is the `rag-pdf` AWS SAM stack in `us-east-1`. The browser demo runs
 
 - The deployed 15-page Transformer PDF smoke test reached `READY` with 38 chunks via pypdf, retrieved document-scoped passages, and returned a Nova 2 Lite answer with page-linked sources on 27 November 2026. See `ARCHITECTURE.md` for its precise scope.
 - The repository contains five research PDFs, a nine-slide evaluation presentation, local tests, and a repeatable command-line smoke test.
+- On 27 November 2026 all five bundled PDFs were indexed through the deployed stack (25 to 719 chunks), a browser question returned a cited answer in 7.3 s, and an off-topic question was declined for lack of evidence. See the README's verification table.
 - No benchmark of citation accuracy across all papers or verified Textract OCR result exists.
 
 ## Product Principles
