@@ -317,6 +317,9 @@ Resources:
               Action: [dynamodb:GetItem, dynamodb:UpdateItem]
               Resource: [!GetAtt ChunksTable.Arn, !GetAtt DocumentsTable.Arn]
             - Effect: Allow
+              Action: [dynamodb:DescribeStream, dynamodb:GetRecords, dynamodb:GetShardIterator, dynamodb:ListStreams]
+              Resource: !GetAtt ChunksTable.StreamArn
+            - Effect: Allow
               Action: bedrock:InvokeModel
               Resource: !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${EmbeddingModelId}'
             - Effect: Allow
@@ -385,7 +388,7 @@ Resources:
                 - !Sub '${DocumentsTable.Arn}/index/OwnerIndex'
                 - !GetAtt ChunksTable.Arn
             - Effect: Allow
-              Action: sqs:SendMessage
+              Action: [sqs:SendMessage, sqs:ReceiveMessage, sqs:DeleteMessage, sqs:GetQueueAttributes]
               Resource: !GetAtt AnswerQueue.Arn
             - Effect: Allow
               Action: bedrock:InvokeModel

@@ -1,6 +1,7 @@
 """AWS clients, API contracts, ownership, and document lifecycle helpers."""
 
 import base64
+import binascii
 import hashlib
 import json
 import logging
@@ -104,7 +105,7 @@ def body(event):
         if not isinstance(raw, dict):
             raise ValueError("object required")
         return raw
-    except (ValueError, TypeError, UnicodeError) as error:
+    except (ValueError, TypeError, UnicodeError, binascii.Error) as error:
         raise ApiError(400, "Send a JSON object as the request body.") from error
 
 

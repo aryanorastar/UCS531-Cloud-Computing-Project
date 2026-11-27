@@ -6,9 +6,9 @@ Upload a PDF, wait for text extraction and indexing, and ask questions answered 
 
 ## Current status
 
-All six Lambda handlers, the shared client, an AWS SAM deployment, integration tests, and GitHub Actions workflows are implemented. Local tests simulate AWS storage and events and stub Textract/Bedrock responses; they do not validate a live model. The SAM template validates and packages for Python 3.12.
+All six Lambda handlers, the shared client, an AWS SAM deployment, integration tests, and GitHub Actions workflows are implemented. Local tests simulate AWS storage and events and stub Textract/Bedrock responses; they do not validate a live model. The SAM template validates and packages for Python 3.12. A separate local demonstration parses text from an actual sample PDF and exercises the handlers with simulated AWS services and deterministic model substitutes.
 
-**Live AWS deployment and real-model verification are pending AWS credentials.** No account/profile or deployment role was configured in the workspace during implementation. The repository remains private. See [ARCHITECTURE.md](ARCHITECTURE.md) and [ROADMAP.md](ROADMAP.md) for current implementation scope and remaining work.
+**Live AWS deployment and real-model verification are pending AWS credentials.** No account/profile or deployment role was available in the evaluation workspace on 27 November 2026. The repository remains private. See [ARCHITECTURE.md](ARCHITECTURE.md) and [ROADMAP.md](ROADMAP.md) for implementation scope and remaining work.
 
 ## Full flow
 
@@ -29,9 +29,14 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 pytest -q
+python -m scripts.local_demo
 sam validate --lint --region us-east-1
 sam build --region us-east-1
 ```
+
+If `python3.12` is unavailable but `uv` is installed, create the environment with `uv venv --seed --python 3.12 .venv`, activate it, and run `uv pip install -r requirements-dev.txt` before the commands above. `--seed` installs pip inside the environment, which SAM needs for its build.
+
+The local demo prints each state transition, retrieved page references, an extractive answer, and an owner-isolation check. It uses real text from the included Transformer PDF; Moto replaces S3/DynamoDB/SQS, pypdf replaces Textract, and deterministic stand-ins replace Titan and DeepSeek. **It requires no AWS account and is not evidence of live OCR, model accuracy, or cloud deployment.** Pass `--pdf` and `--question` to try another text-based PDF and question.
 
 After signing in to your default AWS profile, deploy and run a real sample PDF:
 
@@ -67,6 +72,7 @@ print(result["sources"])
 | `client.py` | IAM signing, streamed uploads, readiness checks, and answer polling |
 | `scripts/deploy.py` | Credential/model preflight, build/deploy, stack outputs, optional live smoke test |
 | `scripts/smoke_test.py` | Real upload-to-answer verification against a deployed API |
+| `scripts/local_demo.py` | Offline, step-by-step handler demonstration using actual PDF text and simulated services |
 | `scripts/bootstrap_github.py` | One-time AWS OIDC bootstrap and optional GitHub variable configuration |
 | `infra/github-oidc.yaml` | OIDC trust, deployment roles, and private artifact bucket |
 | `.github/workflows/` | Tests/build and optional automated AWS deployment |
@@ -78,4 +84,4 @@ print(result["sources"])
 
 The default limits are 25 MiB per PDF, 500 extraction pages, 2,000 chunks per document, and 2,500 chunks per search. Retrieval is an exact document-partition query, not an indexed vector database. Ownership is per IAM user or role; sessions of the same role share that scope. A web interface, stronger multi-user login, document deletion, and measured answer-quality evaluation remain future work.
 
-[Upload API](docs/2-Upload_Endpoint.md) · [Ingestion](docs/3-Data_Ingestion.md) · [Query and answer APIs](docs/4-RAG_Query_API.md) · [Notebook usage](docs/5-Testing_Scripts.md) · [Sample questions](docs/Sample_Questions.md)
+[Lab evaluation guide](docs/EVALUATION_GUIDE.md) · [Upload API](docs/2-Upload_Endpoint.md) · [Ingestion](docs/3-Data_Ingestion.md) · [Query and answer APIs](docs/4-RAG_Query_API.md) · [Notebook usage](docs/5-Testing_Scripts.md) · [Sample questions](docs/Sample_Questions.md)

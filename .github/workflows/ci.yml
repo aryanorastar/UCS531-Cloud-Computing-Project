@@ -26,6 +26,8 @@ jobs:
           ruff check .
           ruff format --check .
           pytest -q
+      - name: Offline sample-PDF demonstration
+        run: python -m scripts.local_demo
       - name: Validate and package deployment
         run: |
           sam validate --lint --region us-east-1

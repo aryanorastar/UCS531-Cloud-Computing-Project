@@ -179,6 +179,8 @@ def test_invalid_json_and_authentication(aws):
     request["body"] = base64.b64encode(b'{"filename":"a.pdf","size_bytes":10}').decode()
     request["isBase64Encoded"] = True
     decoded(get_presigned_url.lambda_handler(request, None))
+    request["body"] = "!not-base64!"
+    decoded(get_presigned_url.lambda_handler(request, None), 400)
 
 
 def test_assumed_role_ownership_stable_across_sessions():

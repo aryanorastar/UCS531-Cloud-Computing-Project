@@ -1,6 +1,6 @@
 # Architecture and implementation status
 
-Updated on 12 October 2026. This is the implemented baseline, with live AWS verification still pending account access. [ROADMAP.md](ROADMAP.md) tracks acceptance and remaining work.
+Updated on 27 November 2026. This is the implemented baseline, with live AWS verification still pending account access. [ROADMAP.md](ROADMAP.md) tracks acceptance and remaining work.
 
 ## Evidence and scope
 
@@ -8,7 +8,9 @@ The imported repository contained only a notebook, manual guides, and five resea
 
 The previous deployment endpoint, stored document IDs, saved outputs, upstream Git remote, and inherited active history were removed before implementation. This project has no dependency on that deployment. The research PDF files are unchanged.
 
-No AWS profile or credentials were configured during implementation, so no live stack or real-model end-to-end run has been confirmed. The deployment script stops before creating resources when credentials are missing.
+No AWS profile or credentials were available in the evaluation workspace on 27 November 2026, so no live stack or real-model end-to-end run has been confirmed. The deployment script stops before creating resources when credentials are missing.
+
+`scripts/local_demo.py` gives a repeatable walkthrough of the same handlers using actual text extracted from the Transformer sample PDF. Moto supplies S3, DynamoDB, and SQS; pypdf substitutes for Textract; deterministic local vector and answer functions substitute for Bedrock. It exercises orchestration, source pages, and owner isolation without cloud credentials. It does not test AWS trigger delivery, OCR, model quality, latency, or cost. [EVALUATION_GUIDE.md](docs/EVALUATION_GUIDE.md) provides the presentation flow and precise claims.
 
 ## Ingestion pipeline
 
@@ -85,7 +87,7 @@ The prompt treats passages as untrusted data, requests evidence-based answers an
 
 API Gateway requires AWS IAM signatures. API resource policy rejects principals outside the stack's account. Application ownership is derived from the IAM user/role ARN; STS role sessions normalize to the same role. Users sharing a role share its document scope. Separate human accounts using one shared role require a future user-login system.
 
-Each function has scoped data/model permissions; Textract has a separate SNS publication role with account/source trust conditions and a scoped PassRole grant. Bedrock generation includes the chosen inference profile, GetInferenceProfile, and its three US destination model ARNs. No full-access managed AWS service policy is attached to application handlers.
+Each function has scoped data/model permissions; the embedding consumer can read only the chunk table stream and the answer consumer can receive/delete from its answer queue. A template contract test checks both event-source grants. Textract has a separate SNS publication role with account/source trust conditions and a scoped PassRole grant. Bedrock generation includes the chosen inference profile, GetInferenceProfile, and its three US destination model ARNs. No full-access managed AWS service policy is attached to application handlers. Local template validation cannot establish that these permissions work in a live account.
 
 ## Models, timing, and deployment
 

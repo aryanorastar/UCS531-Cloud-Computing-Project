@@ -1,6 +1,6 @@
 # Implementation checklist
 
-Updated on 12 October 2026. Checked items are implemented/locally verified. Unchecked acceptance steps remain outstanding. See [ARCHITECTURE.md](ARCHITECTURE.md) for design and limitations.
+Updated on 27 November 2026. Checked items are implemented/locally verified. Unchecked acceptance steps remain outstanding. See [ARCHITECTURE.md](ARCHITECTURE.md) for design and limitations.
 
 ## Completed foundation
 
@@ -14,6 +14,7 @@ Updated on 12 October 2026. Checked items are implemented/locally verified. Unch
 - [x] Implement all six backend handlers with shared contracts/storage/retrieval helpers.
 - [x] Declare Python 3.12 and pinned runtime/development dependencies.
 - [x] Provision API, private versioned S3, tables, SNS/Textract roles, stream processing, queues, logs, and alarms in SAM.
+- [x] Grant the stream and queue consumers their resource-scoped event-source read permissions; cover these contracts with a template test.
 - [x] Configure Titan V2, embedding dimensions, DeepSeek R1 US profile, and scoped model permissions.
 - [x] Build and validate the packaged Lambda artifacts locally.
 - [x] Provide a credential/model preflight, deployment script, and real sample-PDF smoke test.
@@ -53,7 +54,9 @@ Acceptance: a fresh checkout provisions the backend and answers a question about
 ## 4. Tests, quality, and scale
 
 - [x] Integration tests run every handler in sequence using the actual sample PDF bytes, simulated AWS data services, and controlled OCR/model responses.
+- [x] Provide a local walkthrough that extracts actual text from the sample PDF and runs the same handlers with simulated AWS services and deterministic model substitutes.
 - [x] Test malformed requests, unsigned callers, ownership, status, pagination, duplicate events, retry exhaustion, forged client context, and signing.
+- [x] Return HTTP 400 for malformed base64 API bodies.
 - [x] Keep notebook outputs and local configuration/credentials out of commits.
 - [ ] Run the live AWS smoke test; simulated tests do not measure OCR/AI quality.
 - [ ] Build an expected-answer/source evaluation set with unanswerable and cross-document questions.
